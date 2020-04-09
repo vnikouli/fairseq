@@ -45,7 +45,7 @@ from .token_block_dataset import TokenBlockDataset
 from .transform_eos_dataset import TransformEosDataset
 from .transform_eos_lang_pair_dataset import TransformEosLangPairDataset
 from .truncate_dataset import TruncateDataset
-
+from .seq_labeled_dataset import SeqLabelingDataset
 from .iterators import (
     CountingIterator,
     EpochBatchIterator,
@@ -95,6 +95,7 @@ __all__ = [
     'ResamplingDataset',
     'RightPadDataset',
     'RoundRobinZipDatasets',
+    'SeqLabelingDataset',
     'ShardedIterator',
     'SortDataset',
     'StripTokenDataset',

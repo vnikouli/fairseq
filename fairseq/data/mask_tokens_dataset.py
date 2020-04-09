@@ -51,6 +51,17 @@ class MaskTokensDataset(BaseWrapperDataset):
             LRUCacheDataset(cls(dataset, *args, **kwargs, return_masked_tokens=True)),
         )
 
+    @classmethod
+    def apply_mask_mt(cls, dataset: torch.utils.data.Dataset, dataset_aux: torch.utils.data.Dataset, *args, **kwargs):
+        """Return the source and target datasets for masked LM training."""
+        dataset = LRUCacheDataset(dataset)
+        dataset_aux = LRUCacheDataset(dataset_aux)
+        return (
+            LRUCacheDataset(cls(dataset, *args, **kwargs, return_masked_tokens=False)),
+            LRUCacheDataset(cls(dataset, *args, **kwargs, return_masked_tokens=True)),
+            LRUCacheDataset(cls(dataset_aux, *args, **kwargs, return_masked_tokens=True)),
+        )
+
     def __init__(
         self,
         dataset: torch.utils.data.Dataset,

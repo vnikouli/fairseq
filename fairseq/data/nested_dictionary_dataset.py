@@ -56,6 +56,7 @@ class NestedDictionaryDataset(FairseqDataset):
             if not isinstance(v, (FairseqDataset, torch.utils.data.Dataset, )):
                 raise ValueError('Expected Dataset but found: {}'.format(v.__class__))
             first = first or v
+
             if len(v) > 0:
                 assert len(v) == len(first), 'dataset lengths must match'
 
