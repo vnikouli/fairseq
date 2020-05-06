@@ -12,12 +12,19 @@ from fairseq import metrics, modules, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 
 
-@register_criterion('masked_tok_pos_lm')
-class MaskedLmTokPosLoss(FairseqCriterion):
+@register_criterion('masked_lm_adv')
+class MaskedLmAdvLoss(FairseqCriterion):
     """
     Implementation for the loss used in masked language model (MLM) training.
     this one combines token and Pos adversarial prediction : we want to be able to predict token correctly but not it's PoS
     """
+    def __init__(self, task):
+        super().__init__(task)
+        # compute main loss
+        self.main_loss=True
+        # compute aux loss
+        self.aux_loss=True
+
 
     def forward(self, model, sample, reduce=True):
         """Compute the loss for the given sample.
@@ -60,7 +67,7 @@ class MaskedLmTokPosLoss(FairseqCriterion):
             ignore_index=self.padding_idx,
         )
 
-#        pdb.set_trace()
+
         aux_loss = modules.cross_entropy(
             logits_aux.view(-1, logits_aux.size(-1)),
             aux_targets.view(-1),
@@ -70,32 +77,32 @@ class MaskedLmTokPosLoss(FairseqCriterion):
 
         # minimize primary loss and maximize auxilary loss
         alpha=ratio
-        loss=(1-alpha)*primary_loss+alpha*aux_loss
+
+        loss=primary_loss
+            
         sample_size = masked_tokens.int().sum()
         logging_output = {
             'loss': primary_loss.data,
             'aux_loss': aux_loss.data,
-            'mt_loss' : loss.data,
             'ntokens': sample['ntokens'],
             'nsentences': sample['nsentences'],
             'sample_size': sample_size,
         }
 
-        return loss, sample_size, logging_output
+        return (primary_loss, aux_loss), sample_size, logging_output
 
     @staticmethod
     def reduce_metrics(logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
         loss_sum = sum(log.get('loss', 0) for log in logging_outputs)
         aux_loss_sum = sum(log.get('aux_loss', 0) for log in logging_outputs)
-        mt_loss_sum = sum(log.get('mt_loss', 0) for log in logging_outputs)
         sample_size = sum(log.get('sample_size', 0) for log in logging_outputs)
 
         metrics.log_scalar('loss', loss_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar('aux_loss', aux_loss_sum / sample_size / math.log(2), sample_size, round=3)
-        metrics.log_scalar('mt_loss', mt_loss_sum / sample_size / math.log(2), sample_size, round=3)
+
         metrics.log_derived('ppl', lambda meters: utils.get_perplexity(meters['loss'].avg))
-        metrics.log_derived('aux_ppl', lambda meters: utils.get_perplexity(meters['aux_loss'].avg))
+
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
