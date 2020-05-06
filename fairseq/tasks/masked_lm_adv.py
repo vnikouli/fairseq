@@ -5,7 +5,7 @@
 
 import logging
 import os
-
+import torch
 import numpy as np
 
 from fairseq.data import (
@@ -30,8 +30,8 @@ from fairseq.tasks.masked_lm import MaskedLMTask
 logger = logging.getLogger(__name__)
 
 
-@register_task('masked_tok_pos_lm')
-class MaskedLMTokPosTask(MaskedLMTask):
+@register_task('masked_lm_adv')
+class MaskedLMAdvTask(MaskedLMTask):
     """Task for training masked language models (e.g., BERT, RoBERTa).
     Mask LM with auxillary sequence labels
     """
@@ -194,4 +194,50 @@ class MaskedLMTokPosTask(MaskedLMTask):
     @property
     def source_dictionary_aux(self):
         return self.dictionary_aux
+    def update_loss(self, num_updates, loss):        
+        if num_updates < 1000:
+            return loss[0]
+        elif num_updates < 2000:
+            return loss[1]
+        else:
+            return loss[0]+loss[1]
+
+    def train_step(
+        self, sample, model, criterion, optimizer, update_num, ignore_grad=False
+    ):
+        """
+        Do forward and backward, and return the loss as computed by *criterion*
+        for the given *model* and *sample*.
+
+        Args:
+            sample (dict): the mini-batch. The format is defined by the
+                :class:`~fairseq.data.FairseqDataset`.
+            model (~fairseq.models.BaseFairseqModel): the model
+            criterion (~fairseq.criterions.FairseqCriterion): the criterion
+            optimizer (~fairseq.optim.FairseqOptimizer): the optimizer
+            update_num (int): the current update
+            ignore_grad (bool): multiply loss by 0 if this is set to True
+
+        Returns:
+            tuple:
+                - the loss
+                - the sample size, which is used as the denominator for the
+                  gradient
+                - logging outputs to display while training
+        """
+        model.set_num_updates(update_num)
+        model.train()
+        loss, sample_size, logging_output = criterion(model, sample)
+        up_loss = self.update_loss(update_num, loss):
+        if ignore_grad:
+            up_loss *= 0
+        optimizer.backward(up_loss)
+
+        return loss, sample_size, logging_output
+
+    def valid_step(self, sample, model, criterion):
+        model.eval()
+        with torch.no_grad():
+            loss, sample_size, logging_output = criterion(model, sample)
+        return loss[0]+loss[1], sample_size, logging_output
 

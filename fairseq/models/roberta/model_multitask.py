@@ -20,10 +20,12 @@ from fairseq.models import (
 )
 from fairseq.models.roberta.model import RobertaModel, RobertaLMHead, RobertaEncoder
 from fairseq.modules import (
+    grad_reverse,
     LayerNorm,
     TransformerSentenceEncoder,
 )
 from fairseq.modules.transformer_sentence_encoder import init_bert_params
+#from pytorch_revgrad import RevGrad
 
 from .hub_interface import RobertaHubInterface
 
@@ -34,10 +36,19 @@ logger = logging.getLogger(__name__)
 @register_model('roberta_mt')
 class RobertaMTModel(RobertaModel):
 
-
+    def add_args(parser):
+        RobertaModel.add_args(parser)
+        """Add model-specific arguments"""
+        parser.add_argument('--aux-ratio', type=float, metavar='L',
+                            help='ratio for auxilarry loss')
     @property
     def supported_targets(self):
         return {'self'}
+
+    def __init__(self, args, encoder):
+        super().__init__(args, encoder)
+        self.aux_ratio = args.aux_ratio
+        
 
     @classmethod
     def build_model(cls, args, task):
@@ -50,11 +61,13 @@ class RobertaMTModel(RobertaModel):
             args.max_positions = args.tokens_per_sample
 
         encoder = RobertaMTEncoder(args, task.source_dictionary, task.source_dictionary_aux)
+
+
         return cls(args, encoder)
 
     def get_targets(self, sample, net_output):
         """Get targets from either the sample or the net's output."""
-        return sample['target'], sample['aux_target']
+        return sample['target'], sample['aux_target'], self.aux_ratio
 
 class RobertaMTEncoder(RobertaEncoder):
     """RoBERTa encoder.
@@ -66,7 +79,7 @@ class RobertaMTEncoder(RobertaEncoder):
         super().__init__(args, dictionary)
         self.dictionary_aux=dictionary_aux
         self.args = args
-
+        self.aux_ratio = args.aux_ratio
         self.lm_head = RobertaLMHead(
             embed_dim=args.encoder_embed_dim,
             output_dim=len(dictionary),
@@ -80,6 +93,7 @@ class RobertaMTEncoder(RobertaEncoder):
             activation_fn=args.activation_fn,
             weight=None
         )
+
 
     def forward(self, src_tokens, features_only=False, return_all_hiddens=False, masked_tokens=None, **unused):
         """
@@ -100,7 +114,8 @@ class RobertaMTEncoder(RobertaEncoder):
         """
         x, extra = self.extract_features(src_tokens, return_all_hiddens=return_all_hiddens)
         if not features_only:
-            x = self.output_layer(x, masked_tokens=masked_tokens)
+            primary_x, aux_x = self.output_layer(x, masked_tokens=masked_tokens)
+            x = primary_x, grad_reverse(aux_x, self.aux_ratio)
         return x, extra
 
     def extract_features(self, src_tokens, return_all_hiddens=False, **unused):
