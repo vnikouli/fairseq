@@ -62,6 +62,13 @@ def main(args, init_distributed=False):
 
     # Build model and criterion
     model = task.build_model(args)
+
+    import copy
+    initial_state_dict = copy.deepcopy(model.state_dict())
+    checkdir(f"saves/initial_model/")
+    torch.save(model, f"saves/initial_model/initial_state_dict_lt.pth.tar")
+    mask=make_mask(model)
+
     criterion = task.build_criterion(args)
     logger.info(model)
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
@@ -70,47 +77,63 @@ def main(args, init_distributed=False):
         sum(p.numel() for p in model.parameters() if p.requires_grad),
     ))
 
-    # Build trainer
-    if args.model_parallel_size == 1:
-        trainer = Trainer(args, task, model, criterion)
-    else:
-        trainer = MegatronTrainer(args, task, model, criterion)
+    # Pruning
+    # NOTE First Pruning Iteration is of No Compression
+    percents=100-np.concatenate([np.linspace(100,30,15),np.linspace(25,1,13)]) #remained weights: [100.,  95.,  90.,  85.,  80.,  75.,  70.,  65.,  60.,  55.,  50., 45.,  40.,  35.,  30.,  25.,  23.,  21.,  19.,  17.,  15.,  13., 11.,   9.,   7.,   5.,   3.,   1.]
+    ITERATION=percents.shape[0]#prune_iterations
+    comp = np.zeros(ITERATION,float)
+    step = 0
+    for _ite in range(0, ITERATION):
+        print(_ite)
+        if not _ite == 0:
+            new_prune_by_percentile(model,mask,_ite,percents)
+            original_initialization(model,mask, initial_state_dict)
+        comp1 = print_nonzeros(model,_ite)
+        comp[_ite] = comp1
+        #save % remaining weights in comp.pkl
+        with open('comp.pkl', 'wb') as f:
+            pickle.dump(comp, f)
+        # Build trainer
+        if args.model_parallel_size == 1:
+            trainer = Trainer(args, task, model, criterion,_ite)
+        else:
+            trainer = MegatronTrainer(args, task, model, criterion)
 
-    logger.info('training on {} GPUs'.format(args.distributed_world_size))
-    logger.info('max tokens per GPU = {} and max sentences per GPU = {}'.format(
-        args.max_tokens,
-        args.max_sentences,
-    ))
+        logger.info('training on {} GPUs'.format(args.distributed_world_size))
+        logger.info('max tokens per GPU = {} and max sentences per GPU = {}'.format(
+            args.max_tokens,
+            args.max_sentences,
+        ))
 
-    # Load the latest checkpoint if one is available and restore the
-    # corresponding train iterator
-    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+        # Load the latest checkpoint if one is available and restore the
+        # corresponding train iterator
+        extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
 
-    # Train until the learning rate gets too small
-    max_epoch = args.max_epoch or math.inf
-    max_update = args.max_update or math.inf
-    lr = trainer.get_lr()
-    train_meter = meters.StopwatchMeter()
-    train_meter.start()
-    while (
-        lr > args.min_lr
-        and epoch_itr.next_epoch_idx <= max_epoch
-    ):
-        # train for one epoch
-        valid_losses = train(args, trainer, task, epoch_itr, max_update)
-        if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
-            break
+        # Train until the learning rate gets too small
+        max_epoch = args.max_epoch or math.inf
+        max_update = args.max_update or math.inf
+        lr = trainer.get_lr()
+        train_meter = meters.StopwatchMeter()
+        train_meter.start()
+        while (
+            lr > args.min_lr
+            and epoch_itr.next_epoch_idx <= max_epoch
+        ):
+            # train for one epoch
+            valid_losses = train(args, trainer, task, epoch_itr, _ite, max_update)
+            if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
+                break
 
-        # only use first validation loss to update the learning rate
-        lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+            # only use first validation loss to update the learning rate
+            lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
-        epoch_itr = trainer.get_train_iterator(
-            epoch_itr.next_epoch_idx,
-            # sharded data: get train iterator for next epoch
-            load_dataset=(os.pathsep in getattr(args, 'data', '')),
-        )
-    train_meter.stop()
-    logger.info('done training in {:.1f} seconds'.format(train_meter.sum))
+            epoch_itr = trainer.get_train_iterator(
+                epoch_itr.next_epoch_idx,
+                # sharded data: get train iterator for next epoch
+                load_dataset=(os.pathsep in getattr(args, 'data', '')),
+            )
+        train_meter.stop()
+        logger.info('done training in {:.1f} seconds'.format(train_meter.sum))
 
 
 def should_stop_early(args, valid_loss):
@@ -138,7 +161,7 @@ def should_stop_early(args, valid_loss):
 
 
 @metrics.aggregate('train')
-def train(args, trainer, task, epoch_itr, max_update=math.inf):
+def train(args, trainer, task, epoch_itr, _ite, max_update=math.inf):
     """Train the model for one epoch and return validation losses."""
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(
@@ -182,7 +205,7 @@ def train(args, trainer, task, epoch_itr, max_update=math.inf):
             # the end-of-epoch stats will still be preserved
             metrics.reset_meters('train_inner')
 
-        valid_losses = validate_and_save(args, trainer, task, epoch_itr, valid_subsets)
+        valid_losses = validate_and_save(args, trainer, task, epoch_itr, valid_subsets, _ite)
         if should_stop_early(args, valid_losses[0]) or num_updates >= max_update:
             break
 
@@ -195,7 +218,7 @@ def train(args, trainer, task, epoch_itr, max_update=math.inf):
     return valid_losses
 
 
-def validate_and_save(args, trainer, task, epoch_itr, valid_subsets):
+def validate_and_save(args, trainer, task, epoch_itr, valid_subsets,_ite):
     num_updates = trainer.get_num_updates()
     do_save = (
         (
@@ -225,7 +248,7 @@ def validate_and_save(args, trainer, task, epoch_itr, valid_subsets):
         valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
     # Save
     if do_save:
-        checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0],_ite)
     return valid_losses
 
 
@@ -341,6 +364,48 @@ def cli_main(modify_parser=None):
     else:
         # single GPU training
         main(args)
+
+
+def original_initialization(model,mask_temp, initial_state_dict):
+    step = 0
+    for name, param in model.named_parameters(): 
+        if ('weight' in name): 
+            param.data = mask_temp[step] * initial_state_dict[name]
+            step = step + 1
+        elif "bias" in name:
+            param.data = initial_state_dict[name]
+
+# Function to make an empty mask of the same size as the model
+def make_mask(model):
+    step = 0
+    for name, param in model.named_parameters(): 
+        if ('weight' in name):
+            step = step + 1
+    mask = [None]* step 
+    step = 0
+    for name, param in model.named_parameters(): 
+        if ('weight' in name):
+            mask[step] = torch.ones_like(param.data)
+            step = step + 1
+    return mask
+
+
+def print_nonzeros(model,_ite):
+    nonzero = total = 0
+    for name, p in model.named_parameters():
+        tensor = p.data.cpu().numpy()
+        nz_count = np.count_nonzero(tensor)
+        total_params = np.prod(tensor.shape)
+        nonzero += nz_count
+        total += total_params
+        with open('pruning.txt','a') as f:
+            f.write("Iteration: "+str(_ite)+"\n \n")
+            f.write(f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | total_pruned = {total_params - nz_count :7} | shape = {tensor.shape}')
+            f.write(f'alive: {nonzero}, pruned : {total - nonzero}, total: {total}, Compression rate : {total/nonzero:10.2f}x  ({100 * (total-nonzero) / total:6.2f}% pruned)\n \n \n \n ')
+        print(f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | total_pruned = {total_params - nz_count :7} | shape = {tensor.shape}')
+    print(f'alive: {nonzero}, pruned : {total - nonzero}, total: {total}, Compression rate : {total/nonzero:10.2f}x  ({100 * (total-nonzero) / total:6.2f}% pruned)')
+    return (round((nonzero/total)*100,1))
+
 
 
 if __name__ == '__main__':

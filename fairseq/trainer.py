@@ -35,10 +35,10 @@ class Trainer(object):
     communication of the gradients across workers.
     """
 
-    def __init__(self, args, task, model, criterion):
+    def __init__(self, args, task, model, criterion,_ite):
+        self._ite=_ite
         self.args = args
         self.task = task
-
         self.cuda = torch.cuda.is_available() and not args.cpu
         if self.cuda:
             self.device = torch.device('cuda')
@@ -393,6 +393,10 @@ class Trainer(object):
                 logging_outputs, sample_size, ooms, ignore=is_dummy_batch,
             )
 
+        #Freezing Pruned weights by making their gradients Zero
+        for name, p in self.model.named_parameters():
+            if 'weight' in name:
+                p.grad.data=torch.where(torch.abs(p.data) < EPS, torch.tensor([0.]).cuda(), p.grad.data)
         try:
             # multiply gradients by (# GPUs / sample_size) since DDP
             # already normalizes by the number of GPUs. Thus we get
