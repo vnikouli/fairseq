@@ -369,24 +369,19 @@ def cli_main(modify_parser=None):
 def original_initialization(model,mask_temp, initial_state_dict):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name): 
-            param.data = mask_temp[step] * initial_state_dict[name]
-            step = step + 1
-        elif "bias" in name:
-            param.data = initial_state_dict[name]
+        param.data = mask_temp[step] * initial_state_dict[name]
+        step = step + 1
 
 # Function to make an empty mask of the same size as the model
 def make_mask(model):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            step = step + 1
+        step = step + 1
     mask = [None]* step 
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            mask[step] = torch.ones_like(param.data)
-            step = step + 1
+        mask[step] = torch.ones_like(param.data)
+        step = step + 1
     return mask
 
 
