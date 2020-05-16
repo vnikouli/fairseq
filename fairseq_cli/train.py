@@ -15,7 +15,7 @@ import sys
 
 import numpy as np
 import torch
-
+import pickle
 from fairseq import checkpoint_utils, distributed_utils, options, tasks, utils
 from fairseq.data import iterators
 from fairseq.logging import meters, metrics, progress_bar
@@ -63,6 +63,7 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
 
+
     import copy
     initial_state_dict = copy.deepcopy(model.state_dict())
     checkdir(f"saves/initial_model/")
@@ -81,21 +82,21 @@ def main(args, init_distributed=False):
     # NOTE First Pruning Iteration is of No Compression
     percents=100-np.concatenate([np.linspace(100,30,15),np.linspace(25,1,13)]) #remained weights: [100.,  95.,  90.,  85.,  80.,  75.,  70.,  65.,  60.,  55.,  50., 45.,  40.,  35.,  30.,  25.,  23.,  21.,  19.,  17.,  15.,  13., 11.,   9.,   7.,   5.,   3.,   1.]
     ITERATION=percents.shape[0]#prune_iterations
-    comp = np.zeros(ITERATION,float)
+    comp = [0]*ITERATION
     step = 0
     for _ite in range(0, ITERATION):
         print(_ite)
         if not _ite == 0:
             new_prune_by_percentile(model,mask,_ite,percents)
             original_initialization(model,mask, initial_state_dict)
-        comp1 = print_nonzeros(model,_ite)
-        comp[_ite] = comp1
+        comp1 = print_nonzeros(model,mask,_ite)
+        comp[_ite] = (comp1)
         #save % remaining weights in comp.pkl
         with open('comp.pkl', 'wb') as f:
             pickle.dump(comp, f)
         # Build trainer
         if args.model_parallel_size == 1:
-            trainer = Trainer(args, task, model, criterion,_ite)
+            trainer = Trainer(args, task, model, criterion,_ite,mask)
         else:
             trainer = MegatronTrainer(args, task, model, criterion)
 
@@ -369,44 +370,78 @@ def cli_main(modify_parser=None):
 def original_initialization(model,mask_temp, initial_state_dict):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name): 
+        if ('weight' in name) and ('layer' in name): 
             param.data = mask_temp[step] * initial_state_dict[name]
             step = step + 1
-        elif "bias" in name:
+        else:
             param.data = initial_state_dict[name]
+
+
+def new_prune_by_percentile(model,mask,_ite,percents):
+        # Calculate percentile value
+        step = 0
+        for name, param in model.named_parameters():
+            # We do not prune bias term
+            if ('weight' in name) and ('layer' in name):
+                q = percents[_ite]
+                k = 1 + round(.01 * float(q) * (param.data.numel() - 1))
+                percentile_value = torch.abs(param.data).view(-1).kthvalue(k).values.item()
+                new_mask = torch.where(torch.abs(param.data) < percentile_value, torch.tensor([0]).cuda(), torch.tensor([1]).cuda())
+      
+                param.data *= new_mask
+                mask[step] = new_mask
+                step += 1
+
 
 # Function to make an empty mask of the same size as the model
 def make_mask(model):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name):
+        if ('weight' in name) and ('layer' in name):
             step = step + 1
     mask = [None]* step 
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            mask[step] = torch.ones_like(param.data)
+        if ('weight' in name) and ('layer' in name):
+            mask[step] = torch.ones_like(param.data).cuda()
             step = step + 1
     return mask
 
 
-def print_nonzeros(model,_ite):
-    nonzero = total = 0
-    for name, p in model.named_parameters():
-        tensor = p.data.cpu().numpy()
-        nz_count = np.count_nonzero(tensor)
-        total_params = np.prod(tensor.shape)
-        nonzero += nz_count
-        total += total_params
-        with open('pruning.txt','a') as f:
-            f.write("Iteration: "+str(_ite)+"\n \n")
-            f.write(f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | total_pruned = {total_params - nz_count :7} | shape = {tensor.shape}')
-            f.write(f'alive: {nonzero}, pruned : {total - nonzero}, total: {total}, Compression rate : {total/nonzero:10.2f}x  ({100 * (total-nonzero) / total:6.2f}% pruned)\n \n \n \n ')
-        print(f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | total_pruned = {total_params - nz_count :7} | shape = {tensor.shape}')
-    print(f'alive: {nonzero}, pruned : {total - nonzero}, total: {total}, Compression rate : {total/nonzero:10.2f}x  ({100 * (total-nonzero) / total:6.2f}% pruned)')
-    return (round((nonzero/total)*100,1))
+def print_nonzeros(model,mask,_ite):
+    nonzero = total = nonzero_mask = total_mask = 0
+    step=0
+    with open('pruning.txt','a') as f:
+        f.write("Iteration: "+str(_ite)+"\n \n")
+        for name, p in model.named_parameters():
+            tensor = p.data.cpu().numpy()
+            nz_count = np.count_nonzero(tensor)
+            total_params = np.prod(tensor.shape)
+            nonzero += nz_count
+            total += total_params
+            line=f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | zeros = {total_params - nz_count :7} | pruned = 0 | shape = {tensor.shape}'
+            if ('weight' in name) and ('layer' in name):
+                mask_tensor = mask[step].cpu().numpy()
+                nz_count_mask = np.count_nonzero(mask_tensor)
+                total_params_mask = np.prod(mask_tensor.shape)
+                nonzero_mask += nz_count_mask
+                total_mask += total_params_mask
+                step += 1
+                line=f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | zeros = {total_params - nz_count :7} | pruned = {total_params_mask - nz_count_mask :7} | shape = {tensor.shape}'
+            f.write(line)
+            print(line)
+        zero_stat=f'nonzero: {nonzero}, zero : {total - nonzero}, total: {total}, Zeros: {100 * (total-nonzero) / total:6.2f}%'
+        prune_stat=f'nonzero mask: {nonzero_mask}, pruned : {total_mask - nonzero_mask}, total mask: {total_mask}, total: {total}, Considered weights for prune: {total_mask:7} / {total:7} ({100 * total_mask/ total:6.2f}%) | Pruned weights : ({100 * (total_mask - nonzero_mask) / total_mask:6.2f}% of considered weights) | ({100 * (total_mask-nonzero_mask) / total:6.2f}% of all weights)\n\n\n'
+        f.write(zero_stat)
+        f.write(prune_stat)
 
+        print(zero_stat)
+        print(prune_stat)
+    return (round((nonzero_mask/total)*100,1) , round((nonzero_mask/total)*100,1))
 
+def checkdir(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 if __name__ == '__main__':
     cli_main()
