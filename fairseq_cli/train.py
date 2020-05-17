@@ -371,10 +371,10 @@ def original_initialization(model,mask_temp, initial_state_dict):
     step = 0
     for name, param in model.named_parameters(): 
         if ('weight' in name) and ('layer' in name): 
-            param.data = mask_temp[step].cuda() * initial_state_dict[name]
+            param.data = mask_temp[step].cuda() * initial_state_dict[name].cuda()
             step = step + 1
         else:
-            param.data = initial_state_dict[name]
+            param.data = initial_state_dict[name].cuda()
 
 
 def new_prune_by_percentile(model,mask,_ite,percents):
