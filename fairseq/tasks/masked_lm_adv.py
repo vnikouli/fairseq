@@ -40,7 +40,7 @@ class MaskedLMAdvTask(MaskedLMTask):
         MaskedLMTask.add_args(parser)
         """Add task-specific arguments to the parser."""
         parser.add_argument('--data-aux', help='colon separated path to additional data directories list')
-
+    
     def __init__(self, args, dictionary, dictionary_aux):
         super().__init__(args, dictionary)
         self.dictionary_aux = dictionary_aux
@@ -48,6 +48,9 @@ class MaskedLMAdvTask(MaskedLMTask):
 
         # add mask token
         self.mask_idx = dictionary.add_symbol('<mask>')
+        # specifies which loss to use : one of following : 'main', 'aux', 'both'
+        self.loss_to_opt = 'both'
+
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -228,7 +231,15 @@ class MaskedLMAdvTask(MaskedLMTask):
         model.set_num_updates(update_num)
         model.train()
         loss, sample_size, logging_output = criterion(model, sample)
-        up_loss = self.update_loss(update_num, loss):
+        if self.loss_to_opt == "main":
+            #self.main_
+            up_loss = loss[0]
+        elif  self.loss_to_opt == "aux":
+            #self.main_
+            up_loss = loss[1]
+        else:
+            up_loss=loss[0]+loss[1]
+                
         if ignore_grad:
             up_loss *= 0
         optimizer.backward(up_loss)

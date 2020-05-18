@@ -41,13 +41,17 @@ class RobertaMTModel(RobertaModel):
         """Add model-specific arguments"""
         parser.add_argument('--aux-ratio', type=float, metavar='L',
                             help='ratio for auxilarry loss')
+        parser.add_argument('--revgrad', action='store_true',
+                            help='apply gradiet reversal')
     @property
     def supported_targets(self):
         return {'self'}
 
     def __init__(self, args, encoder):
+        
         super().__init__(args, encoder)
         self.aux_ratio = args.aux_ratio
+
         
 
     @classmethod
@@ -61,7 +65,6 @@ class RobertaMTModel(RobertaModel):
             args.max_positions = args.tokens_per_sample
 
         encoder = RobertaMTEncoder(args, task.source_dictionary, task.source_dictionary_aux)
-
 
         return cls(args, encoder)
 
@@ -93,6 +96,7 @@ class RobertaMTEncoder(RobertaEncoder):
             activation_fn=args.activation_fn,
             weight=None
         )
+        self.revgrad = getattr(args, 'revgrad', False) 
 
 
     def forward(self, src_tokens, features_only=False, return_all_hiddens=False, masked_tokens=None, **unused):
@@ -115,7 +119,10 @@ class RobertaMTEncoder(RobertaEncoder):
         x, extra = self.extract_features(src_tokens, return_all_hiddens=return_all_hiddens)
         if not features_only:
             primary_x, aux_x = self.output_layer(x, masked_tokens=masked_tokens)
-            x = primary_x, grad_reverse(aux_x, self.aux_ratio)
+            if self.revgrad :
+                x = primary_x, grad_reverse(aux_x, self.aux_ratio)
+            else:
+                x = primary_x, aux_x
         return x, extra
 
     def extract_features(self, src_tokens, return_all_hiddens=False, **unused):

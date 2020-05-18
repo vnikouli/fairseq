@@ -15,9 +15,9 @@ fi
 GLUE_DATA_FOLDER=$1
 
 # download bpe encoder.json, vocabulary and fairseq dictionary
-wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
-wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
-wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
+#wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
+#wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
+#wget -N 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
 
 TASKS=$2 # QQP
 
@@ -145,7 +145,7 @@ do
   done
 
   # Remove output directory.
-  rm -rf "$TASK-bin"
+  rm -rf "/tmp-network/user/vnikouli/data/tmp/$TASK-bin"
 
   DEVPREF="$TASK_DATA_FOLDER/processed/dev.LANG"
   TESTPREF="$TASK_DATA_FOLDER/processed/test.LANG"
@@ -164,7 +164,7 @@ do
       --trainpref "$TASK_DATA_FOLDER/processed/train.$LANG" \
       --validpref "${DEVPREF//LANG/$LANG}" \
       --testpref "${TESTPREF//LANG/$LANG}" \
-      --destdir "$TASK-bin/$LANG" \
+      --destdir "/tmp-network/user/vnikouli/data/tmp/$TASK-bin/$LANG" \
       --workers 60 \
       --srcdict dict.txt;
   done
@@ -174,12 +174,12 @@ do
       --only-source \
       --trainpref "$TASK_DATA_FOLDER/processed/train.label" \
       --validpref "${DEVPREF//LANG/label}" \
-      --destdir "$TASK-bin/label" \
+      --destdir "/tmp-network/user/vnikouli/data/tmp/$TASK-bin/label" \
       --workers 60;
   else
     # For STS-B output range is converted to be between: [0.0, 1.0]
-    mkdir -p "$TASK-bin/label"
-    awk '{print $1 / 5.0 }' "$TASK_DATA_FOLDER/processed/train.label" > "$TASK-bin/label/train.label"
-    awk '{print $1 / 5.0 }' "$TASK_DATA_FOLDER/processed/dev.label" > "$TASK-bin/label/valid.label"
+    mkdir -p "/tmp-network/user/vnikouli/data/tmp/$TASK-bin/label"
+    awk '{print $1 / 5.0 }' "$TASK_DATA_FOLDER/processed/train.label" > "/tmp-network/user/vnikouli/data/tmp/$TASK-bin/label/train.label"
+    awk '{print $1 / 5.0 }' "$TASK_DATA_FOLDER/processed/dev.label" > "/tmp-network/user/vnikouli/data/tmp/$TASK-bin/label/valid.label"
   fi
 done
