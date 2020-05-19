@@ -397,7 +397,7 @@ class Trainer(object):
         #Freezing Pruned weights by making their gradients Zero
         step = 0
         for name, p in self.model.named_parameters():
-            if ('weight' in name) and ('layer' in name):
+            if ('weight' in name):
                 #p.grad.data=torch.where(torch.abs(p.data) < EPS, torch.tensor([0.]).cuda(), p.grad.data)
                 p.grad.data=torch.where(self.mask[step] < EPS, torch.tensor([0.]).cuda(), p.grad.data)
                 step += 1
