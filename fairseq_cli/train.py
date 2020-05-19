@@ -370,7 +370,7 @@ def cli_main(modify_parser=None):
 def original_initialization(model,mask_temp, initial_state_dict):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name) and ('layer' in name): 
+        if ('weight' in name): 
             param.data = mask_temp[step].cuda() * initial_state_dict[name].cuda()
             step = step + 1
         else:
@@ -382,7 +382,7 @@ def new_prune_by_percentile(model,mask,_ite,percents):
         step = 0
         for name, param in model.named_parameters():
             # We do not prune bias term
-            if ('weight' in name) and ('layer' in name):
+            if ('weight' in name):
                 q = percents[_ite]
                 k = 1 + round(.01 * float(q) * (param.data.numel() - 1))
                 percentile_value = torch.abs(param.data).view(-1).kthvalue(k).values.item()
@@ -397,12 +397,12 @@ def new_prune_by_percentile(model,mask,_ite,percents):
 def make_mask(model):
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name) and ('layer' in name):
+        if ('weight' in name):
             step = step + 1
     mask = [None]* step 
     step = 0
     for name, param in model.named_parameters(): 
-        if ('weight' in name) and ('layer' in name):
+        if ('weight' in name):
             mask[step] = torch.ones_like(param.data).cuda()
             step = step + 1
     return mask
@@ -420,7 +420,7 @@ def print_nonzeros(model,mask,_ite):
             nonzero += nz_count
             total += total_params
             line=f'{name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | zeros = {total_params - nz_count :7} | pruned = 0 | shape = {tensor.shape}'
-            if ('weight' in name) and ('layer' in name):
+            if ('weight' in name):
                 mask_tensor = mask[step].cpu().numpy()
                 nz_count_mask = np.count_nonzero(mask_tensor)
                 total_params_mask = np.prod(mask_tensor.shape)
