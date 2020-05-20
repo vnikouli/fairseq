@@ -36,7 +36,7 @@ class Trainer(object):
     """
 
     def __init__(self, args, task, model, criterion,_ite,mask):
-        self._ite=_ite
+        #self._ite=_ite
         self.args = args
         self.mask=mask
         self.task = task

@@ -26,6 +26,7 @@ def get_training_parser(default_task="translation"):
     add_model_args(parser)
     add_optimization_args(parser)
     add_checkpoint_args(parser)
+
     return parser
 
 
@@ -191,6 +192,8 @@ def parse_args_and_arch(
 def get_parser(desc, default_task="translation"):
     # Before creating the true parser, we need to import optional user module
     # in order to eagerly import custom tasks, optimizers, architectures, etc.
+    import pdb
+    pdb.set_trace()
     usr_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     usr_parser.add_argument("--user-dir", default=None)
     usr_args, _ = usr_parser.parse_known_args()
@@ -236,7 +239,9 @@ def get_parser(desc, default_task="translation"):
                         help='total number of GPUs to parallelize model over')
     parser.add_argument('--checkpoint-suffix', default='',
                         help='Suffix to add to the checkpoint file name')
-
+    parser.add_argument('pruning', type=int, default=0,
+                        help='Percentage of weights to prune, should be an integer from [0, 100]')
+    import pdb
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():
         parser.add_argument(
