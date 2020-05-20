@@ -12,6 +12,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torch.nn.utils.prune as prune
+
 from fairseq import utils
 from fairseq.models import (
     FairseqDecoder,
@@ -24,6 +26,7 @@ from fairseq.modules import (
     TransformerSentenceEncoder,
 )
 from fairseq.modules.transformer_sentence_encoder import init_bert_params
+
 
 from .hub_interface import RobertaHubInterface
 
@@ -199,6 +202,7 @@ class RobertaModel(FairseqLanguageModel):
                     state_dict[prefix + 'classification_heads.' + k] = v
 
 
+
 class RobertaLMHead(nn.Module):
     """Head for masked language modeling."""
 
@@ -246,7 +250,6 @@ class RobertaClassificationHead(nn.Module):
         x = self.out_proj(x)
         return x
 
-
 class RobertaEncoder(FairseqDecoder):
     """RoBERTa encoder.
 
@@ -255,7 +258,8 @@ class RobertaEncoder(FairseqDecoder):
     """
 
     def __init__(self, args, dictionary):
-        super().__init__(dictionary)
+        super().__init__(args, dictionary)
+
         self.args = args
 
         # RoBERTa is a sentence encoder model, so users will intuitively trim
@@ -326,6 +330,109 @@ class RobertaEncoder(FairseqDecoder):
     def max_positions(self):
         """Maximum output length supported by the encoder."""
         return self.args.max_positions
+
+
+
+def get_weights_to_prune(state_dict):
+    weights=[]
+    for key in state_dict.keys():
+        if 'weight' in key:
+            weights.append(state_dict[key])
+    return weights
+
+def upgrade_state_dict_with_checkpoint_weights(
+    state_dict: Dict[str, Any], weights, checkpoint: str
+) -> Dict[str, Any]:
+
+    if not os.path.exists(checkpoint):
+        raise IOError("Model file not found: {}".format(checkpoint))
+
+    state = checkpoint_utils.load_checkpoint_to_cpu(checkpoint)
+    ch_state_dict = state["model"]
+    for key in ch_state_dict.keys():
+        if weights==None or key in weights :
+            if key in state_dict:
+                state_dict[key] = ch_state_dict[key]
+            elif "{}_orig".format(key) in state_dict:
+                state_dict["{}_orig".format(key)] = ch_state_dict[key]
+            else:
+                print("WARNING: unknown key {}".format(key))
+    return state_dict
+
+@register_model('roberta_lth')
+class RobertaLTHModel(RobertaModel):
+    @staticmethod
+    def add_args(parser):
+        """Add model-specific arguments to the parser."""
+        RobertaModel.add_args(parser)
+        parser.add_argument(
+            "--init-checkpoint",
+            type=str,
+            metavar="STR",
+            help="checkpoint with initial weights",
+        )
+        parser.add_argument(
+            "--final-checkpoint",
+            type=str,
+            metavar="STR",
+            help="final checkpoint used to obtain mask for pruning",
+        )
+        parser.add_argument(
+            "--pruning",
+            type=float,
+            help="portion of weights to prune"
+        )
+
+    @classmethod
+    def build_model(self, args, task):
+        assert hasattr(args, "init_checkpoint"), (
+            "You must specify a path for --init-checkpoint to use "
+            "--arch roberta_lth"
+        )
+        assert hasattr(args, "final_checkpoint"), (
+            "You must specify a path for --final-checkpoint to use "
+            "--arch roberta_lth"
+        )
+
+        base_architecture(args)
+
+        if not hasattr(args, 'max_positions'):
+            args.max_positions = args.tokens_per_sample
+
+        encoder = RobertaEncoderLTH(args, task.source_dictionary)
+        return cls(args, encoder)
+
+
+class RobertaEncoderLTH(RobertaEncoder):
+    def __init__(self, args, dictionary):
+        self.pruning=args.pruning
+        weights = get_weights_to_prune(self.state_dict())
+        # get weight values from final checkpoint
+        final_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
+            state_dict=self.state_dict(),
+            weights=weights,
+            final_checkpoint=args.final_checkpoint,
+        )
+
+        self.load_state_dict(final_loaded_state_dict, strict=True)
+        parameters_to_prune = [(self, w) for w in weights]
+        for w in weights:
+            prune.l1_unstructured(self, name=w, amount=self.pruning)
+        #prune.global_unstructured(parameters_to_prune, 
+        #                          pruning_method=prune.L1Unstructured,
+        #                          amount=self.pruning)
+     
+        # get weight values from initialization checkpoint
+        init_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
+            state_dict=self.state_dict(),
+            weights=None,
+            checkpoint=args.init_checkpoint,
+        )
+        self.load_state_dict(final_loaded_state_dict, strict=True)
+        # make pruning final
+        for w in in weights:
+            prune.remove(self, w)
+        
 
 
 @register_model_architecture('roberta', 'roberta')
