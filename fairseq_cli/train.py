@@ -376,7 +376,7 @@ def prune_by_percentile(model,final_model_checkpoint,_ite):
         for name, param in model.named_parameters():
             # We do not prune bias term
             if ('weight' in name):
-                tensor_of_final_model=final_model_checkpoint['model'][name]
+                tensor_of_final_model=final_model_checkpoint['model'][name].cuda()
                 k = 1 + round(.01 * float(_ite) * (tensor_of_final_model.numel() - 1))
                 percentile_value = torch.abs(tensor_of_final_model).view(-1).kthvalue(k).values.item()
                 new_mask = torch.where(torch.abs(tensor_of_final_model) < percentile_value, torch.tensor([0]).cuda(), torch.tensor([1]).cuda())
