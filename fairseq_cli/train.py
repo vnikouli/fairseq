@@ -63,13 +63,6 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
 
-
-    import copy
-    initial_state_dict = copy.deepcopy(model.state_dict())
-    checkdir(f"saves/initial_model/")
-    torch.save(model, f"saves/initial_model/initial_state_dict_lt.pth.tar")
-    mask=make_mask(model)
-
     criterion = task.build_criterion(args)
     logger.info(model)
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
@@ -78,63 +71,61 @@ def main(args, init_distributed=False):
         sum(p.numel() for p in model.parameters() if p.requires_grad),
     ))
 
+    #get final and early checkpoints
+    final_model_checkpoint=torch.load(args.pretrained_checkpoint)
+    early_model_checkpoint=torch.load(args.early_checkpoint)
+    #copy weights from early checkpoint
+    early_ckpt_initialization(model,early_model_checkpoint)
+
     # Pruning
     # NOTE First Pruning Iteration is of No Compression
-    percents=100-np.concatenate([np.linspace(100,30,15),np.linspace(25,1,13)]) #remained weights: [100.,  95.,  90.,  85.,  80.,  75.,  70.,  65.,  60.,  55.,  50., 45.,  40.,  35.,  30.,  25.,  23.,  21.,  19.,  17.,  15.,  13., 11.,   9.,   7.,   5.,   3.,   1.]
-    ITERATION=percents.shape[0]#prune_iterations
-    comp = [0]*ITERATION
-    step = 0
-    for _ite in range(0, ITERATION):
-        print(_ite)
-        if not _ite == 0:
-            new_prune_by_percentile(model,mask,_ite,percents)
-            original_initialization(model,mask, initial_state_dict)
-        comp1 = print_nonzeros(model,mask,_ite)
-        comp[_ite] = (comp1)
-        #save % remaining weights in comp.pkl
-        with open('comp.pkl', 'wb') as f:
-            pickle.dump(comp, f)
-        # Build trainer
-        if args.model_parallel_size == 1:
-            trainer = Trainer(args, task, model, criterion,_ite,mask)
-        else:
-            trainer = MegatronTrainer(args, task, model, criterion)
+    _ite=args.ite
+    print(_ite)
+    mask=prune_by_percentile(model, final_model_checkpoint, _ite )
+    comp1 = print_nonzeros(model,mask,_ite)
+    print(comp1)
 
-        logger.info('training on {} GPUs'.format(args.distributed_world_size))
-        logger.info('max tokens per GPU = {} and max sentences per GPU = {}'.format(
-            args.max_tokens,
-            args.max_sentences,
-        ))
+    # Build trainer
+    if args.model_parallel_size == 1:
+        trainer = Trainer(args, task, model, criterion,_ite,mask)
+    else:
+        trainer = MegatronTrainer(args, task, model, criterion)
 
-        # Load the latest checkpoint if one is available and restore the
-        # corresponding train iterator
-        extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+    logger.info('training on {} GPUs'.format(args.distributed_world_size))
+    logger.info('max tokens per GPU = {} and max sentences per GPU = {}'.format(
+        args.max_tokens,
+        args.max_sentences,
+    ))
 
-        # Train until the learning rate gets too small
-        max_epoch = args.max_epoch or math.inf
-        max_update = args.max_update or math.inf
-        lr = trainer.get_lr()
-        train_meter = meters.StopwatchMeter()
-        train_meter.start()
-        while (
-            lr > args.min_lr
-            and epoch_itr.next_epoch_idx <= max_epoch
-        ):
-            # train for one epoch
-            valid_losses = train(args, trainer, task, epoch_itr, _ite, max_update)
-            if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
-                break
+    # Load the latest checkpoint if one is available and restore the
+    # corresponding train iterator
+    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
 
-            # only use first validation loss to update the learning rate
-            lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+    # Train until the learning rate gets too small
+    max_epoch = args.max_epoch or math.inf
+    max_update = args.max_update or math.inf
+    lr = trainer.get_lr()
+    train_meter = meters.StopwatchMeter()
+    train_meter.start()
+    while (
+        lr > args.min_lr
+        and epoch_itr.next_epoch_idx <= max_epoch
+    ):
+        # train for one epoch
+        valid_losses = train(args, trainer, task, epoch_itr, _ite, max_update)
+        if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
+            break
 
-            epoch_itr = trainer.get_train_iterator(
-                epoch_itr.next_epoch_idx,
-                # sharded data: get train iterator for next epoch
-                load_dataset=(os.pathsep in getattr(args, 'data', '')),
-            )
-        train_meter.stop()
-        logger.info('done training in {:.1f} seconds'.format(train_meter.sum))
+        # only use first validation loss to update the learning rate
+        lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+
+        epoch_itr = trainer.get_train_iterator(
+            epoch_itr.next_epoch_idx,
+            # sharded data: get train iterator for next epoch
+            load_dataset=(os.pathsep in getattr(args, 'data', '')),
+        )
+    train_meter.stop()
+    logger.info('done training in {:.1f} seconds'.format(train_meter.sum))
 
 
 def should_stop_early(args, valid_loss):
@@ -367,45 +358,34 @@ def cli_main(modify_parser=None):
         main(args)
 
 
-def original_initialization(model,mask_temp, initial_state_dict):
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name): 
-            param.data = mask_temp[step].cuda() * initial_state_dict[name].cuda()
-            step = step + 1
-        else:
-            param.data = initial_state_dict[name].cuda()
+def early_ckpt_initialization(model,early_model_checkpoint):
+    for name, param in model.named_parameters():
+        param.data = early_model_checkpoint['model'][name]
 
 
-def new_prune_by_percentile(model,mask,_ite,percents):
-        # Calculate percentile value
+
+def prune_by_percentile(model,final_model_checkpoint,_ite):
+        # create empty masks for weights
         step = 0
+        for name, param in model.named_parameters(): 
+            if ('weight' in name):
+                step = step + 1
+        mask = [None]* step 
+        step = 0
+        #obtain mask and apply it
         for name, param in model.named_parameters():
             # We do not prune bias term
             if ('weight' in name):
-                q = percents[_ite]
-                k = 1 + round(.01 * float(q) * (param.data.numel() - 1))
-                percentile_value = torch.abs(param.data).view(-1).kthvalue(k).values.item()
-                new_mask = torch.where(torch.abs(param.data) < percentile_value, torch.tensor([0]).cuda(), torch.tensor([1]).cuda())
+                tensor_of_final_model=final_model_checkpoint['model'][name]
+                k = 1 + round(.01 * float(_ite) * (tensor_of_final_model.numel() - 1))
+                percentile_value = torch.abs(tensor_of_final_model).view(-1).kthvalue(k).values.item()
+                new_mask = torch.where(torch.abs(tensor_of_final_model) < percentile_value, torch.tensor([0]).cuda(), torch.tensor([1]).cuda())
       
                 param.data *= new_mask
                 mask[step] = new_mask
                 step += 1
+        return mask
 
-
-# Function to make an empty mask of the same size as the model
-def make_mask(model):
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            step = step + 1
-    mask = [None]* step 
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            mask[step] = torch.ones_like(param.data).cuda()
-            step = step + 1
-    return mask
 
 
 def print_nonzeros(model,mask,_ite):
