@@ -360,7 +360,7 @@ def cli_main(modify_parser=None):
 
 def early_ckpt_initialization(model,early_model_checkpoint):
     for name, param in model.named_parameters():
-        param.data = early_model_checkpoint['model'][name]
+        param.data = early_model_checkpoint['model'][name].cuda()
 
 
 
