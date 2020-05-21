@@ -20,7 +20,7 @@ from torch.serialization import default_restore_location
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(args, trainer, epoch_itr, val_loss, _ite):
+def save_checkpoint(args, trainer, epoch_itr, val_loss):
     from fairseq import distributed_utils, meters
 
     prev_best = getattr(save_checkpoint, "best", val_loss)
@@ -43,27 +43,27 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss, _ite):
 
     suffix = getattr(args, "checkpoint_suffix", "")
     checkpoint_conds = collections.OrderedDict()
-    checkpoint_conds["checkpoint_{}lth_{}{}.pt".format(_ite,epoch, suffix)] = (
+    checkpoint_conds["checkpoint_{}{}.pt".format(epoch, suffix)] = (
         end_of_epoch
         and not args.no_epoch_checkpoints
         and epoch % args.save_interval == 0
     )
-    checkpoint_conds["checkpoint_{}lth_{}_{}{}.pt".format(_ite, epoch, updates, suffix)] = (
+    checkpoint_conds["checkpoint_{}_{}{}.pt".format( epoch, updates, suffix)] = (
         not end_of_epoch
         and args.save_interval_updates > 0
         and updates % args.save_interval_updates == 0
     )
-    checkpoint_conds["checkpoint_best_{}lth{}.pt".format(_ite, suffix)] = val_loss is not None and (
+    checkpoint_conds["checkpoint_best.pt".format( suffix)] = val_loss is not None and (
         not hasattr(save_checkpoint, "best")
         or is_better(val_loss, save_checkpoint.best)
     )
     if val_loss is not None and args.keep_best_checkpoints > 0:
-        checkpoint_conds["checkpoint.best_{}lth_{}_{:.2f}.pt".format(
-            _ite, args.best_checkpoint_metric, val_loss)] = (
+        checkpoint_conds["checkpoint.best_{}_{:.2f}.pt".format(
+            args.best_checkpoint_metric, val_loss)] = (
             not hasattr(save_checkpoint, "best")
             or is_better(val_loss, save_checkpoint.best)
         )
-    checkpoint_conds["checkpoint_last_{}lth{}.pt".format(_ite, suffix)] = not args.no_last_checkpoints
+    checkpoint_conds["checkpoint_last.pt".format( suffix)] = not args.no_last_checkpoints
 
     extra_state = {"train_iterator": epoch_itr.state_dict(), "val_loss": val_loss}
     if hasattr(save_checkpoint, "best"):
@@ -87,7 +87,7 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss, _ite):
     if not end_of_epoch and args.keep_interval_updates > 0:
         # remove old checkpoints; checkpoints are sorted in descending order
         checkpoints = checkpoint_paths(
-            args.save_dir, pattern=r"checkpoint_{}lth_\d+_(\d+)\.pt".format(_ite)
+            args.save_dir, pattern=r"checkpoint_\d+_(\d+)\.pt"
         )
         for old_chk in checkpoints[args.keep_interval_updates :]:
             if os.path.lexists(old_chk):
@@ -95,7 +95,7 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss, _ite):
 
     if args.keep_last_epochs > 0:
         # remove old epoch checkpoints; checkpoints are sorted in descending order
-        checkpoints = checkpoint_paths(args.save_dir, pattern=r"checkpoint_{}lth_(\d+)\.pt").format(_ite)
+        checkpoints = checkpoint_paths(args.save_dir, pattern=r"checkpoint_(\d+)\.pt")
         for old_chk in checkpoints[args.keep_last_epochs :]:
             if os.path.lexists(old_chk):
                 os.remove(old_chk)
@@ -103,7 +103,7 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss, _ite):
     if args.keep_best_checkpoints > 0:
         # only keep the best N checkpoints according to validation metric
         checkpoints = checkpoint_paths(
-            args.save_dir, pattern=r"checkpoint\.best_{}lth_{}_(\d+\.?\d*)\.pt".format(_ite,args.best_checkpoint_metric))
+            args.save_dir, pattern=r"checkpoint\.best_{}_(\d+\.?\d*)\.pt".format(args.best_checkpoint_metric))
         if not args.maximize_best_checkpoint_metric:
             checkpoints = checkpoints[::-1]
         for old_chk in checkpoints[args.keep_best_checkpoints:]:

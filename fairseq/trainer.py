@@ -35,10 +35,10 @@ class Trainer(object):
     communication of the gradients across workers.
     """
 
-    def __init__(self, args, task, model, criterion,_ite,mask):
+    def __init__(self, args, task, model, criterion):
         #self._ite=_ite
         self.args = args
-        self.mask=mask
+
         self.task = task
         self.cuda = torch.cuda.is_available() and not args.cpu
         if self.cuda:
@@ -394,13 +394,13 @@ class Trainer(object):
                 logging_outputs, sample_size, ooms, ignore=is_dummy_batch,
             )
         EPS=1e-6
-        #Freezing Pruned weights by making their gradients Zero
-        step = 0
-        for name, p in self.model.named_parameters():
-            if ('weight' in name):
-                #p.grad.data=torch.where(torch.abs(p.data) < EPS, torch.tensor([0.]).cuda(), p.grad.data)
-                p.grad.data=torch.where(self.mask[step] < EPS, torch.tensor([0.]).cuda(), p.grad.data)
-                step += 1
+        ##Freezing Pruned weights by making their gradients Zero
+        #step = 0
+        #for name, p in self.model.named_parameters():
+        #    if ('weight' in name):
+        #        #p.grad.data=torch.where(torch.abs(p.data) < EPS, torch.tensor([0.]).cuda(), p.grad.data)
+        #        p.grad.data=torch.where(self.mask[step] < EPS, torch.tensor([0.]).cuda(), p.grad.data)
+        #        step += 1
         try:
             # multiply gradients by (# GPUs / sample_size) since DDP
             # already normalizes by the number of GPUs. Thus we get

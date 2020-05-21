@@ -38,8 +38,7 @@ def main(args, init_distributed=False):
     assert args.max_tokens is not None or args.max_sentences is not None, \
         'Must specify batch size either with --max-tokens or --max-sentences'
     metrics.reset()
-    import pdb
-    pdb.set_trace()
+
     # Initialize CUDA and distributed training
     if torch.cuda.is_available() and not args.cpu:
         torch.cuda.set_device(args.device_id)
@@ -65,12 +64,6 @@ def main(args, init_distributed=False):
     model = task.build_model(args)
 
 
-    import copy
-    initial_state_dict = copy.deepcopy(model.state_dict())
-    checkdir(f"saves/initial_model/")
-    torch.save(model, f"saves/initial_model/initial_state_dict_lt.pth.tar")
-    mask=make_mask(model)
-
     criterion = task.build_criterion(args)
     logger.info(model)
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
@@ -79,22 +72,10 @@ def main(args, init_distributed=False):
         sum(p.numel() for p in model.parameters() if p.requires_grad),
     ))
 
-    # Pruning
-    # NOTE First Pruning Iteration is of No Compression
-    #percents=100-np.concatenate([np.linspace(100,30,15),np.linspace(25,1,13)])
-    pruning_percent = 100 - args.pruning_percentile
-    #remained weights: [100.,  95.,  90.,  85.,  80.,  75.,  70.,  65.,  60.,  55.,  50., 45.,  40.,  35.,  30.,  25.,  23.,  21.,  19.,  17.,  15.,  13., 11.,   9.,   7.,   5.,   3.,   1.]
-    #ITERATION=percents.shape[0]#prune_iterations
-    #comp = [0]*ITERATION
-    step = 0
-    #for _ite in range(0, ITERATION):
-    #print(_ite)
-    #if not _ite == 0:
-
     # Build trainer
     if args.model_parallel_size == 1:
         #trainer = Trainer(args, task, model, criterion,_ite,mask)
-        trainer = Trainer(args, task, model, criterion, mask)
+        trainer = Trainer(args, task, model, criterion)
     else:
         trainer = MegatronTrainer(args, task, model, criterion)
 
@@ -107,17 +88,7 @@ def main(args, init_distributed=False):
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
     extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
-    # do the pruning after we've loaded the checkpoint
-    if pruning_percent > 0:
-        new_prune_by_percentile(model,mask, pruning_percent)
-        
-        # set model back to original initialization
-        original_initialization(model,mask, initial_state_dict)
-    comp1 = print_nonzeros(model,mask, pruning_percent)
-    #comp[_ite] = (comp1)
-    #save % remaining weights in comp.pkl
-    with open('comp-{}.pkl'.format(pruning_percent), 'wb') as f:
-        pickle.dump(comp1, f)
+
 
     # Train until the learning rate gets too small
     max_epoch = args.max_epoch or math.inf
@@ -130,7 +101,7 @@ def main(args, init_distributed=False):
         and epoch_itr.next_epoch_idx <= max_epoch
     ):
         # train for one epoch
-        valid_losses = train(args, trainer, task, epoch_itr, _ite, max_update)
+        valid_losses = train(args, trainer, task, epoch_itr, max_update)
         if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
             break
 
@@ -171,7 +142,7 @@ def should_stop_early(args, valid_loss):
 
 
 @metrics.aggregate('train')
-def train(args, trainer, task, epoch_itr, _ite, max_update=math.inf):
+def train(args, trainer, task, epoch_itr, max_update=math.inf):
     """Train the model for one epoch and return validation losses."""
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(
@@ -215,7 +186,7 @@ def train(args, trainer, task, epoch_itr, _ite, max_update=math.inf):
             # the end-of-epoch stats will still be preserved
             metrics.reset_meters('train_inner')
 
-        valid_losses = validate_and_save(args, trainer, task, epoch_itr, valid_subsets, _ite)
+        valid_losses = validate_and_save(args, trainer, task, epoch_itr, valid_subsets)
         if should_stop_early(args, valid_losses[0]) or num_updates >= max_update:
             break
 
@@ -228,7 +199,7 @@ def train(args, trainer, task, epoch_itr, _ite, max_update=math.inf):
     return valid_losses
 
 
-def validate_and_save(args, trainer, task, epoch_itr, valid_subsets,_ite):
+def validate_and_save(args, trainer, task, epoch_itr, valid_subsets):
     num_updates = trainer.get_num_updates()
     do_save = (
         (
@@ -258,7 +229,7 @@ def validate_and_save(args, trainer, task, epoch_itr, valid_subsets,_ite):
         valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
     # Save
     if do_save:
-        checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0],_ite)
+        checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
     return valid_losses
 
 
@@ -342,8 +313,7 @@ def distributed_main(i, args, start_rank=0):
 
 
 def cli_main(modify_parser=None):
-    import pdb
-    pdb.set_trace()
+
     parser = options.get_training_parser()
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
 

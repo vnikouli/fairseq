@@ -6,13 +6,14 @@
 RoBERTa: A Robustly Optimized BERT Pretraining Approach.
 """
 
-import logging
-
+import logging, os
+from fairseq import checkpoint_utils
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 import torch.nn.utils.prune as prune
+from typing import Any, Dict
 
 from fairseq import utils
 from fairseq.models import (
@@ -258,7 +259,7 @@ class RobertaEncoder(FairseqDecoder):
     """
 
     def __init__(self, args, dictionary):
-        super().__init__(args, dictionary)
+        super().__init__(dictionary)
 
         self.args = args
 
@@ -337,7 +338,7 @@ def get_weights_to_prune(state_dict):
     weights=[]
     for key in state_dict.keys():
         if 'weight' in key:
-            weights.append(state_dict[key])
+            weights.append(key)
     return weights
 
 def upgrade_state_dict_with_checkpoint_weights(
@@ -347,14 +348,16 @@ def upgrade_state_dict_with_checkpoint_weights(
     if not os.path.exists(checkpoint):
         raise IOError("Model file not found: {}".format(checkpoint))
 
-    state = checkpoint_utils.load_checkpoint_to_cpu(checkpoint)
+    state = checkpoint_utils.load_checkpoint(checkpoint)
+   
     ch_state_dict = state["model"]
-    for key in ch_state_dict.keys():
+    for ckey in ch_state_dict.keys():
+        key=ckey.replace("decoder.","")
         if weights==None or key in weights :
             if key in state_dict:
-                state_dict[key] = ch_state_dict[key]
+                state_dict[key] = ch_state_dict[ckey]
             elif "{}_orig".format(key) in state_dict:
-                state_dict["{}_orig".format(key)] = ch_state_dict[key]
+                state_dict["{}_orig".format(key)] = ch_state_dict[ckey]
             else:
                 print("WARNING: unknown key {}".format(key))
     return state_dict
@@ -384,11 +387,11 @@ class RobertaLTHModel(RobertaModel):
         )
 
     @classmethod
-    def build_model(self, args, task):
-        assert hasattr(args, "init_checkpoint"), (
-            "You must specify a path for --init-checkpoint to use "
-            "--arch roberta_lth"
-        )
+    def build_model(cls, args, task):
+        #assert hasattr(args, "init_checkpoint"), (
+        #    "You must specify a path for --init-checkpoint to use "
+        #    "--arch roberta_lth"
+        #)
         assert hasattr(args, "final_checkpoint"), (
             "You must specify a path for --final-checkpoint to use "
             "--arch roberta_lth"
@@ -403,35 +406,70 @@ class RobertaLTHModel(RobertaModel):
         return cls(args, encoder)
 
 
+import copy
 class RobertaEncoderLTH(RobertaEncoder):
     def __init__(self, args, dictionary):
+        super().__init__(args, dictionary)
+
         self.pruning=args.pruning
         weights = get_weights_to_prune(self.state_dict())
+
+        if not hasattr(args, "init_checkpoint"):
+            initial_state_dict = copy.deepcopy(self.state_dict())
+
+            #checkdir(f"saves/initial_model/")
+            #torch.save(model, f"saves/initial_model/initial_state_dict_lt.pth.tar")
+
         # get weight values from final checkpoint
+
+        
         final_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
             state_dict=self.state_dict(),
             weights=weights,
-            final_checkpoint=args.final_checkpoint,
+            checkpoint=args.final_checkpoint
         )
-
+        
         self.load_state_dict(final_loaded_state_dict, strict=True)
-        parameters_to_prune = [(self, w) for w in weights]
-        for w in weights:
-            prune.l1_unstructured(self, name=w, amount=self.pruning)
-        #prune.global_unstructured(parameters_to_prune, 
-        #                          pruning_method=prune.L1Unstructured,
-        #                          amount=self.pruning)
+        parameters_to_prune = []
+        def do_prune(m, prefix):
+            if not prefix =="":
+                prefix = prefix +"."
+            for n, c in m.named_children():
+                #print(prefix, n)
+                do_prune(c, prefix+n)
+            if prefix+"weight" in weights:
+        #        print(prefix)
+                parameters_to_prune.append((m, "weight"))
+                #prune.l1_unstructured(m, name="weight", amount=self.pruning)
+        
+        do_prune(self, "")
+        
+
+
+        prune.global_unstructured(parameters_to_prune, 
+                                  pruning_method=prune.L1Unstructured,
+                                  amount=self.pruning)
      
         # get weight values from initialization checkpoint
-        init_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
-            state_dict=self.state_dict(),
-            weights=None,
-            checkpoint=args.init_checkpoint,
-        )
-        self.load_state_dict(final_loaded_state_dict, strict=True)
+        
+        if hasattr(args, "init_checkpoint"):
+            initial_state_dict = upgrade_state_dict_with_checkpoint_weights(
+                state_dict=self.state_dict(),
+                weights=None,
+                checkpoint=args.init_checkpoint,
+            )
+        self.load_state_dict(initial_state_dict, strict=True)
         # make pruning final
-        for w in in weights:
-            prune.remove(self, w)
+        def finalize_prune(m, prefix):
+            if not prefix =="":
+                prefix = prefix +"."
+            for n, c in m.named_children():
+                #print(prefix, n)
+                finalize_prune(c, prefix+n)
+            if prefix+"weight" in weights:
+        #        print(prefix)
+                prune.remove(m, "weight")
+        #finalize_prune(self, "")
         
 
 
@@ -455,6 +493,11 @@ def base_architecture(args):
 
 @register_model_architecture('roberta', 'roberta_base')
 def roberta_base_architecture(args):
+    base_architecture(args)
+
+
+@register_model_architecture('roberta_lth', 'roberta_base_lth')
+def roberta_base_lth_architecture(args):
     base_architecture(args)
 
 
