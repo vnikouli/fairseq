@@ -236,13 +236,7 @@ def get_parser(desc, default_task="translation"):
                         help='total number of GPUs to parallelize model over')
     parser.add_argument('--checkpoint-suffix', default='',
                         help='Suffix to add to the checkpoint file name')
-    #args for one shot LTH
-    parser.add_argument('--pretrained_checkpoint', default='',
-                        help='checkpoint to get final weights to prune')
-    parser.add_argument('--early_checkpoint', default='',
-                        help='checkpoint for original initialization')
-    parser.add_argument('--ite', type=float, default=0.0,
-                        help='% to prune')
+
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():
         parser.add_argument(
@@ -470,6 +464,13 @@ def add_checkpoint_args(parser):
                              'improve for N consecutive validation runs; note '
                              'that this is influenced by --validate-interval'))
     # fmt: on
+    #args for one shot LTH
+    group.add_argument('--pretrained_checkpoint', default='',
+                        help='checkpoint to get final weights to prune')
+    group.add_argument('--early_checkpoint', default='',
+                        help='checkpoint for original initialization')
+    group.add_argument('--ite', type=float, default=0.0,
+                        help='% to prune')
     return group
 
 
