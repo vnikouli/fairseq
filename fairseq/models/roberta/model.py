@@ -348,7 +348,7 @@ def upgrade_state_dict_with_checkpoint_weights(
     if not os.path.exists(checkpoint):
         raise IOError("Model file not found: {}".format(checkpoint))
 
-    state = checkpoint_utils.load_checkpoint(checkpoint)
+    state = checkpoint_utils.load_checkpoint_to_cpu(checkpoint)
    
     ch_state_dict = state["model"]
     for ckey in ch_state_dict.keys():
@@ -439,25 +439,36 @@ class RobertaEncoderLTH(RobertaEncoder):
                 do_prune(c, prefix+n)
             if prefix+"weight" in weights:
         #        print(prefix)
-                parameters_to_prune.append((m, "weight"))
-                #prune.l1_unstructured(m, name="weight", amount=self.pruning)
+                #parameters_to_prune.append((m, "weight"))
+                prune.l1_unstructured(m, name="weight", amount=self.pruning)
         
         do_prune(self, "")
-        
+        def get_pruning_per_weight(m, prefix):
+            if not prefix =="":
+                prefix = prefix +"."
+            for n, c in m.named_children():
+                #print(prefix, n)
+                get_pruning_per_weight(c, prefix+n)
+            if prefix+"weight" in weights:
+        #        print(prefix)
+                print("Sparsity in {}.weight: {:.2f}%".format(prefix,
+                    100. * float(torch.sum(m.weight == 0))/ float(m.weight.nelement()) ))
 
 
-        prune.global_unstructured(parameters_to_prune, 
-                                  pruning_method=prune.L1Unstructured,
-                                  amount=self.pruning)
-     
+        #prune.global_unstructured(parameters_to_prune, 
+        #                          pruning_method=prune.L1Unstructured,
+        #                          amount=self.pruning)
+        get_pruning_per_weight(self, "")
         # get weight values from initialization checkpoint
         
         if hasattr(args, "init_checkpoint"):
             initial_state_dict = upgrade_state_dict_with_checkpoint_weights(
                 state_dict=self.state_dict(),
-                weights=None,
+                weights=weights,
                 checkpoint=args.init_checkpoint,
             )
+
+            
         self.load_state_dict(initial_state_dict, strict=True)
         # make pruning final
         def finalize_prune(m, prefix):

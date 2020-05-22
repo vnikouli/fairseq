@@ -75,7 +75,7 @@ class MultiheadAttention(nn.Module):
 
         self.enable_torch_version = False
         if hasattr(F, "multi_head_attention_forward"):
-            self.enable_torch_version = True
+            self.enable_torch_version = False
         else:
             self.enable_torch_version = False
 
