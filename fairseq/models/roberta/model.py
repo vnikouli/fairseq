@@ -140,7 +140,7 @@ class RobertaModel(FairseqLanguageModel):
     def supported_targets(self):
         return {'self'}
 
-    @classmethod
+
     def from_pretrained(cls, model_name_or_path, checkpoint_file='model.pt', data_name_or_path='.', bpe='gpt2', **kwargs):
         from fairseq import hub_utils
         x = hub_utils.from_pretrained(
@@ -333,7 +333,79 @@ class RobertaEncoder(FairseqDecoder):
         return self.args.max_positions
 
 
+@register_model('roberta_lth')
+class RobertaLTHModel(RobertaModel):
+    @staticmethod
+    def add_args(parser):
+        """Add model-specific arguments to the parser."""
+        RobertaModel.add_args(parser)
+        parser.add_argument(
+            "--init-checkpoint",
+            type=str,
+            metavar="STR",
+            help="checkpoint with initial weights",
+        )
+        parser.add_argument(
+            "--final-checkpoint",
+            type=str,
+            metavar="STR",
+            help="final checkpoint used to obtain mask for pruning",
+        )
+        parser.add_argument(
+            "--pruning",
+            type=float, default=None,
+            help="portion of weights to prune"
+        )
 
+    @classmethod
+    def from_pretrained(cls, model_name_or_path, checkpoint_file='model.pt', data_name_or_path='.', bpe='gpt2', **kwargs):
+        from fairseq import hub_utils
+        x = hub_utils.from_pretrained(
+            model_name_or_path,
+            checkpoint_file,
+            data_name_or_path,
+            archive_map=cls.hub_models(),
+            bpe=bpe,
+            load_checkpoint_heads=True,
+            pruning= None,
+            **kwargs
+        )
+        return RobertaHubInterface(x['args'], x['task'], x['models'][0])
+
+    @classmethod
+    def build_model(cls, args, task):
+        #assert hasattr(args, "init_checkpoint"), (
+        #    "You must specify a path for --init-checkpoint to use "
+        #    "--arch roberta_lth"
+        #)
+        assert hasattr(args, "final_checkpoint"), (
+            "You must specify a path for --final-checkpoint to use "
+            "--arch roberta_lth"
+        )
+
+        base_architecture(args)
+
+        if not hasattr(args, 'max_positions'):
+            args.max_positions = args.tokens_per_sample
+
+        encoder = RobertaEncoder(args, task.source_dictionary)
+
+        if args.pruning!=None:
+            encoder = get_stabilized_lottery_ticket(encoder, args.init_checkpoint, args.final_checkpoint, args.pruning)
+        return cls(args, encoder)
+
+
+    def upgrade_state_dict_named(self, state_dict, name):
+        super().upgrade_state_dict_named(state_dict, name)
+        all_weights = get_weights_to_prune(state_dict)
+
+        for k in all_weights:
+            if 'weight_orig' in k:
+                state_dict[k.replace('weight_orig', 'weight')] = state_dict[k]
+                del  state_dict[k]
+        return state_dict
+        
+        
 def get_weights_to_prune(state_dict):
     weights=[]
     for key in state_dict.keys():
@@ -362,125 +434,71 @@ def upgrade_state_dict_with_checkpoint_weights(
                 print("WARNING: unknown key {}".format(key))
     return state_dict
 
-@register_model('roberta_lth')
-class RobertaLTHModel(RobertaModel):
-    @staticmethod
-    def add_args(parser):
-        """Add model-specific arguments to the parser."""
-        RobertaModel.add_args(parser)
-        parser.add_argument(
-            "--init-checkpoint",
-            type=str,
-            metavar="STR",
-            help="checkpoint with initial weights",
-        )
-        parser.add_argument(
-            "--final-checkpoint",
-            type=str,
-            metavar="STR",
-            help="final checkpoint used to obtain mask for pruning",
-        )
-        parser.add_argument(
-            "--pruning",
-            type=float,
-            help="portion of weights to prune"
-        )
-
-    @classmethod
-    def build_model(cls, args, task):
-        #assert hasattr(args, "init_checkpoint"), (
-        #    "You must specify a path for --init-checkpoint to use "
-        #    "--arch roberta_lth"
-        #)
-        assert hasattr(args, "final_checkpoint"), (
-            "You must specify a path for --final-checkpoint to use "
-            "--arch roberta_lth"
-        )
-
-        base_architecture(args)
-
-        if not hasattr(args, 'max_positions'):
-            args.max_positions = args.tokens_per_sample
-
-        encoder = RobertaEncoderLTH(args, task.source_dictionary)
-        return cls(args, encoder)
 
 
-import copy
-class RobertaEncoderLTH(RobertaEncoder):
-    def __init__(self, args, dictionary):
-        super().__init__(args, dictionary)
+def get_stabilized_lottery_ticket(model, init_checkpoint, final_checkpoint, pruning):
+    weights = get_weights_to_prune(model.state_dict())
 
-        self.pruning=args.pruning
-        weights = get_weights_to_prune(self.state_dict())
-
-        if not hasattr(args, "init_checkpoint"):
-            initial_state_dict = copy.deepcopy(self.state_dict())
-
-            #checkdir(f"saves/initial_model/")
-            #torch.save(model, f"saves/initial_model/initial_state_dict_lt.pth.tar")
-
-        # get weight values from final checkpoint
-
+    # get weight values from final checkpoint
         
-        final_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
-            state_dict=self.state_dict(),
-            weights=weights,
-            checkpoint=args.final_checkpoint
-        )
+    final_loaded_state_dict = upgrade_state_dict_with_checkpoint_weights(
+        state_dict=model.state_dict(),
+        weights=weights,
+        checkpoint = final_checkpoint
+    )
         
-        self.load_state_dict(final_loaded_state_dict, strict=True)
-        parameters_to_prune = []
-        def do_prune(m, prefix):
-            if not prefix =="":
-                prefix = prefix +"."
-            for n, c in m.named_children():
-                #print(prefix, n)
-                do_prune(c, prefix+n)
-            if prefix+"weight" in weights:
-        #        print(prefix)
-                #parameters_to_prune.append((m, "weight"))
-                prune.l1_unstructured(m, name="weight", amount=self.pruning)
+    model.load_state_dict(final_loaded_state_dict, strict=True)
+    parameters_to_prune = []
+    def do_prune(m, prefix):
+        if not prefix =="":
+            prefix = prefix +"."
+        for n, c in m.named_children():
+            #print(prefix, n)
+            do_prune(c, prefix+n)
+        if prefix+"weight" in weights:
+            #        print(prefix)
+            #parameters_to_prune.append((m, "weight"))
+            prune.l1_unstructured(m, name="weight", amount=pruning)
         
-        do_prune(self, "")
-        def get_pruning_per_weight(m, prefix):
-            if not prefix =="":
-                prefix = prefix +"."
-            for n, c in m.named_children():
-                #print(prefix, n)
-                get_pruning_per_weight(c, prefix+n)
-            if prefix+"weight" in weights:
-        #        print(prefix)
-                print("Sparsity in {}.weight: {:.2f}%".format(prefix,
-                    100. * float(torch.sum(m.weight == 0))/ float(m.weight.nelement()) ))
+    do_prune(model, "")
+    def get_pruning_per_weight(m, prefix):
+        if not prefix =="":
+            prefix = prefix +"."
+        for n, c in m.named_children():
+            #print(prefix, n)
+            get_pruning_per_weight(c, prefix+n)
+        if prefix+"weight" in weights:
+            #        print(prefix)
+            print("Sparsity in {}.weight: {:.2f}%".format(prefix,
+                100. * float(torch.sum(m.weight == 0))/ float(m.weight.nelement()) ))
 
 
-        #prune.global_unstructured(parameters_to_prune, 
-        #                          pruning_method=prune.L1Unstructured,
-        #                          amount=self.pruning)
-        get_pruning_per_weight(self, "")
-        # get weight values from initialization checkpoint
+    #prune.global_unstructured(parameters_to_prune, 
+    #                          pruning_method=prune.L1Unstructured,
+    #                          amount=self.pruning)
+    get_pruning_per_weight(model, "")
+    # get weight values from initialization checkpoint
         
-        if hasattr(args, "init_checkpoint"):
-            initial_state_dict = upgrade_state_dict_with_checkpoint_weights(
-                state_dict=self.state_dict(),
-                weights=weights,
-                checkpoint=args.init_checkpoint,
-            )
-
+    initial_state_dict = upgrade_state_dict_with_checkpoint_weights(
+        state_dict=model.state_dict(),
+        weights=weights,
+        checkpoint=init_checkpoint,
+    )
             
-        self.load_state_dict(initial_state_dict, strict=True)
-        # make pruning final
-        def finalize_prune(m, prefix):
-            if not prefix =="":
-                prefix = prefix +"."
-            for n, c in m.named_children():
-                #print(prefix, n)
-                finalize_prune(c, prefix+n)
-            if prefix+"weight" in weights:
+    model.load_state_dict(initial_state_dict, strict=True)
+    return model
+
+# make pruning final
+def finalize_prune(m, prefix):
+    if not prefix =="":
+        prefix = prefix +"."
+    for n, c in m.named_children():
+        #print(prefix, n)
+        finalize_prune(c, prefix+n)
+    if prefix+"weight" in weights:
         #        print(prefix)
-                prune.remove(m, "weight")
-        #finalize_prune(self, "")
+        prune.remove(m, "weight")
+            #finalize_prune(self, "")
         
 
 
