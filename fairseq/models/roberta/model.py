@@ -154,6 +154,8 @@ class RobertaModel(FairseqLanguageModel):
         )
         return RobertaHubInterface(x['args'], x['task'], x['models'][0])
 
+
+
     def upgrade_state_dict_named(self, state_dict, name):
         super().upgrade_state_dict_named(state_dict, name)
 
@@ -339,18 +341,18 @@ class RobertaLTHModel(RobertaModel):
     def add_args(parser):
         """Add model-specific arguments to the parser."""
         RobertaModel.add_args(parser)
-        parser.add_argument(
-            "--init-checkpoint",
-            type=str,
-            metavar="STR",
-            help="checkpoint with initial weights",
-        )
-        parser.add_argument(
-            "--final-checkpoint",
-            type=str,
-            metavar="STR",
-            help="final checkpoint used to obtain mask for pruning",
-        )
+        #parser.add_argument(
+        #    "--init-checkpoint",
+        #    type=str,
+        #    metavar="STR",
+        #    help="checkpoint with initial weights",
+        #)
+        #parser.add_argument(
+        #    "--final-checkpoint",
+        #    type=str,
+        #    metavar="STR",
+        #    help="final checkpoint used to obtain mask for pruning",
+        #)
         parser.add_argument(
             "--pruning",
             type=float, default=None,
@@ -367,10 +369,15 @@ class RobertaLTHModel(RobertaModel):
             archive_map=cls.hub_models(),
             bpe=bpe,
             load_checkpoint_heads=True,
-            pruning= None,
+            arch="roberta_base_lth",
+            pruning = 0.2,
             **kwargs
         )
+
         return RobertaHubInterface(x['args'], x['task'], x['models'][0])
+
+    def finalize_prune(self):
+        finalize_prune(self, '')
 
     @classmethod
     def build_model(cls, args, task):
@@ -390,20 +397,11 @@ class RobertaLTHModel(RobertaModel):
 
         encoder = RobertaEncoder(args, task.source_dictionary)
 
-        if args.pruning!=None:
-            encoder = get_stabilized_lottery_ticket(encoder, args.init_checkpoint, args.final_checkpoint, args.pruning)
+        #if args.pruning!=None:
+        encoder = get_stabilized_lottery_ticket(encoder, args.init_checkpoint, args.final_checkpoint, args.pruning)
         return cls(args, encoder)
 
 
-    def upgrade_state_dict_named(self, state_dict, name):
-        super().upgrade_state_dict_named(state_dict, name)
-        all_weights = get_weights_to_prune(state_dict)
-
-        for k in all_weights:
-            if 'weight_orig' in k:
-                state_dict[k.replace('weight_orig', 'weight')] = state_dict[k]
-                del  state_dict[k]
-        return state_dict
         
         
 def get_weights_to_prune(state_dict):
@@ -467,7 +465,7 @@ def get_stabilized_lottery_ticket(model, init_checkpoint, final_checkpoint, prun
         for n, c in m.named_children():
             #print(prefix, n)
             get_pruning_per_weight(c, prefix+n)
-        if prefix+"weight" in weights:
+        if hasattr(m, "weight"):
             #        print(prefix)
             print("Sparsity in {}.weight: {:.2f}%".format(prefix,
                 100. * float(torch.sum(m.weight == 0))/ float(m.weight.nelement()) ))
@@ -476,7 +474,7 @@ def get_stabilized_lottery_ticket(model, init_checkpoint, final_checkpoint, prun
     #prune.global_unstructured(parameters_to_prune, 
     #                          pruning_method=prune.L1Unstructured,
     #                          amount=self.pruning)
-    get_pruning_per_weight(model, "")
+    #get_pruning_per_weight(model, "")
     # get weight values from initialization checkpoint
         
     initial_state_dict = upgrade_state_dict_with_checkpoint_weights(
@@ -488,14 +486,16 @@ def get_stabilized_lottery_ticket(model, init_checkpoint, final_checkpoint, prun
     model.load_state_dict(initial_state_dict, strict=True)
     return model
 
+
 # make pruning final
 def finalize_prune(m, prefix):
     if not prefix =="":
         prefix = prefix +"."
     for n, c in m.named_children():
-        #print(prefix, n)
+        print(prefix, n)
         finalize_prune(c, prefix+n)
-    if prefix+"weight" in weights:
+
+    if hasattr(m, "weight"):
         #        print(prefix)
         prune.remove(m, "weight")
             #finalize_prune(self, "")

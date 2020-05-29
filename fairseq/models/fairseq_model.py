@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.prune as prune
 from fairseq import utils
 from fairseq.checkpoint_utils import prune_state_dict
 from fairseq.data import Dictionary
@@ -91,6 +92,33 @@ class BaseFairseqModel(nn.Module):
         self.upgrade_state_dict(state_dict)
         new_state_dict = prune_state_dict(state_dict, args)
         return super().load_state_dict(new_state_dict, strict)
+
+    def get_sparsity(self):
+        def get_sparsity(m, prefix):
+            if not prefix =="":
+                prefix = prefix +"."
+            for n, c in m.named_children():
+                #print(prefix, n)
+                get_sparsity(c, prefix+n)
+            if hasattr(m, "weight"):
+            #        print(prefix)
+                print("Sparsity in {}.weight: {:.2f}%".format(prefix,
+                    100. * float(torch.sum(m.weight == 0))/ float(m.weight.nelement()) ))
+        get_sparsity(self, "")
+
+    def finalize_prune(self):
+        # make pruning final
+        def finalize_prune(m, prefix):
+            if not prefix =="":
+                prefix = prefix +"."
+            for n, c in m.named_children():
+                #print(prefix, n)
+                finalize_prune(c, prefix+n)
+
+            if hasattr(m, "weight"):
+                #        print(prefix)
+                prune.remove(m, "weight")
+        finalize_prune(self, "")
 
     def upgrade_state_dict(self, state_dict):
         """Upgrade old state dicts to work with newer code."""

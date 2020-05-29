@@ -38,7 +38,6 @@ def main(args, init_distributed=False):
     assert args.max_tokens is not None or args.max_sentences is not None, \
         'Must specify batch size either with --max-tokens or --max-sentences'
     metrics.reset()
-
     # Initialize CUDA and distributed training
     if torch.cuda.is_available() and not args.cpu:
         torch.cuda.set_device(args.device_id)
@@ -59,11 +58,103 @@ def main(args, init_distributed=False):
     # Load valid dataset (we load training data below, based on the latest checkpoint)
     for valid_sub_split in args.valid_subset.split(','):
         task.load_dataset(valid_sub_split, combine=False, epoch=1)
+    if args.iterative_pruning:
+        iterative_pruning(args, task, init_distributed)
+    else:
+        default_train(args, task, init_distributed)
+
+
+def iterative_pruning(args, task, init_distributed):
+    # Build model and criterion
+    model = task.build_model(args)
+    criterion = task.build_criterion(args)
+    logger.info(model)
+    logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
+    from fairseq import lth_utils
+    iterations=args.pruning_iterations
+    step=args.pruning_step
+    savedir=args.save_dir
+    tbdir = args.tensorboard_logdir
+    #args.tensorboard_logdir
+    it=0
+    sparsity= 0
+    for it in range(iterations):
+        # empty tb writers for new iteration
+        progress_bar._tensorboard_writers={}
+        if it==0:
+            pr = args.pruning_start
+            sparsity = 1 - pr
+        else:            
+            pr += args.pruning_step
+            sparsity = 1 - pr
+            model.finalize_prune()
+        args.save_dir='{}/pruning-pr{}-it{}'.format(savedir, pr, it)
+        args.tensorboard_logdir='{}/pruning-pr{}-it{}'.format(tbdir, pr, it)
+        logger.info('tensorboard {}'.format(args.tensorboard_logdir))
+        logger.info('pruning rate {} iteration {} sparsity {}'.format( pr, it, sparsity))
+        
+        model = lth_utils.get_lottery_ticket(model, args.init_checkpoint, args.final_checkpoint, pr, it)
+        it+=1
+
+        logger.info('num. model params: {} (num. trained: {}), {} zeroz'.format(
+            sum(p.numel() for p in model.parameters()),
+            sum(p.numel() for p in model.parameters() if p.requires_grad),
+
+            sum(torch.nonzero(p.data).size(0) for p in model.parameters()),
+        ))
+
+        # Build trainer
+        if args.model_parallel_size == 1:
+            #trainer = Trainer(args, task, model, criterion,_ite,mask)
+            trainer = Trainer(args, task, model, criterion)
+        else:
+            trainer = MegatronTrainer(args, task, model, criterion)
+
+        logger.info('training on {} GPUs'.format(args.distributed_world_size))
+        logger.info('max tokens per GPU = {} and max sentences per GPU = {}'.format(
+            args.max_tokens,
+            args.max_sentences,
+        ))
+
+        # Load the latest checkpoint if one is available and restore the
+        # corresponding train iterator
+        extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+
+
+        # Train until the learning rate gets too small
+        max_epoch = args.max_epoch or math.inf
+        max_update = args.max_update or math.inf
+        lr = trainer.get_lr()
+        train_meter = meters.StopwatchMeter()
+        train_meter.start()
+        while (
+                lr > args.min_lr
+                and epoch_itr.next_epoch_idx <= max_epoch
+        ):
+            # train for one epoch
+            valid_losses = train(args, trainer, task, epoch_itr, max_update)
+            if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
+                break
+
+            # only use first validation loss to update the learning rate
+            lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+
+            epoch_itr = trainer.get_train_iterator(
+                epoch_itr.next_epoch_idx,
+                # sharded data: get train iterator for next epoch
+                load_dataset=(os.pathsep in getattr(args, 'data', '')),
+            )
+        train_meter.stop()
+        logger.info('done training with pruning {} in {:.1f} seconds'.format(pr, train_meter.sum))
+
+
+def default_train(args, task, init_distributed=False):
+
 
     # Build model and criterion
     model = task.build_model(args)
 
-
+    
     criterion = task.build_criterion(args)
     logger.info(model)
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))

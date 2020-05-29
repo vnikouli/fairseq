@@ -29,6 +29,8 @@ class RobertaHubInterface(nn.Module):
         # this is useful for determining the device
         self.register_buffer('_float_tensor', torch.tensor([0], dtype=torch.float))
 
+    def finalize_prune(self):
+        self.model.finalize_prune()
     @property
     def device(self):
         return self._float_tensor.device

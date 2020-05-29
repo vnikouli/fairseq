@@ -239,23 +239,14 @@ def get_parser(desc, default_task="translation"):
     parser.add_argument('--checkpoint-suffix', default='',
                         help='Suffix to add to the checkpoint file name')
     parser.add_argument('--iterative-pruning', action='store_true', help='Perform iterative pruning')
-            parser.add_argument(
-            "--init-checkpoint",
-            type=str,
-            metavar="STR",
-            help="checkpoint with initial weights",
-        )
-        parser.add_argument(
-            "--final-checkpoint",
-            type=str,
-            metavar="STR",
-            help="final checkpoint used to obtain mask for pruning",
-        )
-        parser.add_argument(
-            "--pruning-steps",
-            type=str, default="0.3,0.5,0.7,0.9",
-            help="initial pruning ratio"
-        )
+    parser.add_argument("--init-checkpoint", type=str, metavar="STR",
+                        help="checkpoint with initial weights")
+    parser.add_argument( "--final-checkpoint", type=str,  metavar="STR",
+                         help="final checkpoint used to obtain mask for pruning",)
+    parser.add_argument( "--pruning-iterations", type=int, default="10", help="init")
+    parser.add_argument( "--pruning-step", type=float, default="0.2", help="init")
+    parser.add_argument( "--pruning-start", type=float, default="0.2", help="init")
+
 
 
 

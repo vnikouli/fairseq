@@ -57,6 +57,7 @@ def progress_bar(
             from .fb_tbmf_wrapper import FbTbmfWrapper
             bar = FbTbmfWrapper(bar, log_interval)
         except ImportError:
+
             bar = TensorboardProgressBarWrapper(bar, tensorboard_logdir)
 
     return bar
@@ -322,7 +323,9 @@ class TensorboardProgressBarWrapper(BaseProgressBar):
         if SummaryWriter is None:
             return None
         _writers = _tensorboard_writers
+
         if key not in _writers:
+
             _writers[key] = SummaryWriter(os.path.join(self.tensorboard_logdir, key))
             _writers[key].add_text('sys.argv', " ".join(sys.argv))
         return _writers[key]

@@ -199,6 +199,7 @@ def load_model_ensemble_and_task(filenames, arg_overrides=None, task=None, stric
     ensemble = []
     for filename in filenames:
         filename = filename.replace(".pt", suffix + ".pt")
+
         if not PathManager.exists(filename):
             raise IOError("Model file not found: {}".format(filename))
         state = load_checkpoint_to_cpu(filename, arg_overrides)
@@ -208,6 +209,7 @@ def load_model_ensemble_and_task(filenames, arg_overrides=None, task=None, stric
             task = tasks.setup_task(args)
 
         # build model for ensemble
+
         model = task.build_model(args)
         model.load_state_dict(state["model"], strict=strict, args=args)
         ensemble.append(model)
