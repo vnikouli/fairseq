@@ -232,15 +232,7 @@ class MaskedLMAdvTask(MaskedLMTask):
         model.train()
         loss, sample_size, logging_output = criterion(model, sample)
 
-        if self.loss_to_opt == "main":
-            #self.main_
-            up_loss = loss[0]
-        elif  self.loss_to_opt == "aux":
-            #self.main_
-            up_loss = loss[1]
-        else:
-            up_loss=loss[0]+loss[1]
-                
+
         if ignore_grad:
             loss = loss[0]*0, loss[1]*0
         
