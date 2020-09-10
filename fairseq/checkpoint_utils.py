@@ -296,6 +296,57 @@ def save_state(
         torch_persistent_save(state_dict, f)
 
 
+
+def save_adv_state(
+    filename,
+    args,
+    model_state_dict,
+    criterion,
+    adv_criterion,
+    optimizer,
+    adv_optimizer,
+    lr_scheduler,
+    num_updates,
+    optim_history=None,
+    extra_state=None,
+):
+    from fairseq import utils
+
+    if optim_history is None:
+        optim_history = []
+    if extra_state is None:
+        extra_state = {}
+    state_dict = {
+        "args": args,
+        "model": convert_state_dict_type(model_state_dict) if model_state_dict else {},
+        "optimizer_history": optim_history
+        + [
+            {
+                "criterion_name": criterion.__class__.__name__,
+                "optimizer_name": optimizer.__class__.__name__,
+                "lr_scheduler_state": lr_scheduler.state_dict(),
+                "num_updates": num_updates,
+            }
+        ],
+        "extra_state": extra_state,
+    }
+    if utils.has_parameters(criterion):
+        state_dict["criterion"] = criterion.state_dict()
+    if utils.has_parameters(criterion):
+        state_dict["adv_criterion"] = adv_criterion.state_dict()
+
+    if not args.no_save_optimizer_state:
+        state_dict["last_optimizer_state"] = convert_state_dict_type(
+            optimizer.state_dict()
+        )
+        state_dict["last_adv_optimizer_state"] = convert_state_dict_type(
+            adv_optimizer.state_dict()
+        )
+
+    with PathManager.open(filename, "wb") as f:
+        torch_persistent_save(state_dict, f)
+
+
 def _upgrade_state_dict(state):
     """Helper for upgrading old model checkpoints."""
     from fairseq import models, registry, tasks

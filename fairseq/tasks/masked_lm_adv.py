@@ -97,7 +97,7 @@ class MaskedLMAdvTask(MaskedLMTask):
 
         if aux_dataset is None:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, split_aux_path))
-        import pdb
+
 
         # create continuous blocks of tokens
         aux_dataset = TokenBlockDataset(
@@ -116,7 +116,7 @@ class MaskedLMAdvTask(MaskedLMTask):
             eos=self.source_dictionary.eos(),
             break_mode=self.args.sample_break_mode
         )
-        #pdb.set_trace()
+
 
 
         logger.info('loaded {} blocks from: {}'.format(len(dataset), split_path))
@@ -231,6 +231,7 @@ class MaskedLMAdvTask(MaskedLMTask):
         model.set_num_updates(update_num)
         model.train()
         loss, sample_size, logging_output = criterion(model, sample)
+
         if self.loss_to_opt == "main":
             #self.main_
             up_loss = loss[0]
@@ -241,8 +242,11 @@ class MaskedLMAdvTask(MaskedLMTask):
             up_loss=loss[0]+loss[1]
                 
         if ignore_grad:
-            up_loss *= 0
-        optimizer.backward(up_loss)
+            loss = loss[0]*0, loss[1]*0
+        
+
+        optimizer.backward(loss[0], retain_graph=True)
+        optimizer.backward(loss[1])
 
         return loss, sample_size, logging_output
 

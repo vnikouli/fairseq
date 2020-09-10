@@ -104,7 +104,7 @@ class _FP16OptimizerMixin(object):
             self.scaler.loss_scale = state_dict['loss_scale']
         self.fp32_optimizer.load_state_dict(state_dict, optimizer_overrides)
 
-    def backward(self, loss):
+    def backward(self, loss, retain_graph=False):
         """Computes the sum of gradients of the given tensor w.r.t. graph leaves.
 
         Compared to :func:`fairseq.optim.FairseqOptimizer.backward`, this
@@ -112,7 +112,7 @@ class _FP16OptimizerMixin(object):
         underflow.
         """
         loss = loss * self.scaler.loss_scale
-        loss.backward()
+        loss.backward(retain_graph=retain_graph)
         self._needs_sync = True
 
     def _sync_fp16_grads_to_fp32(self, multiply_grads=1.):
@@ -320,7 +320,7 @@ class _MemoryEfficientFP16OptimizerMixin(object):
                 param = id_map[k]
                 self.optimizer.state[param] = v
 
-    def backward(self, loss):
+    def backward(self, loss, retain_graph=False):
         """Computes the sum of gradients of the given tensor w.r.t. graph leaves.
 
         Compared to :func:`fairseq.optim.FairseqOptimizer.backward`, this
@@ -328,7 +328,7 @@ class _MemoryEfficientFP16OptimizerMixin(object):
         underflow.
         """
         loss = loss * self.scaler.loss_scale
-        loss.backward()
+        loss.backward(retain_graph=True)
         self._grads_are_scaled = True
 
     def _unscale_grads(self, multiply_grads=1.):
