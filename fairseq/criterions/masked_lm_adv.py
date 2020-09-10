@@ -18,13 +18,6 @@ class MaskedLmAdvLoss(FairseqCriterion):
     Implementation for the loss used in masked language model (MLM) training.
     this one combines token and Pos adversarial prediction : we want to be able to predict token correctly but not it's PoS
     """
-    def __init__(self, task):
-        super().__init__(task)
-        # compute main loss
-        self.main_loss=True
-        # compute aux loss
-        self.aux_loss=True
-
 
     def forward(self, model, sample, reduce=True):
         """Compute the loss for the given sample.
