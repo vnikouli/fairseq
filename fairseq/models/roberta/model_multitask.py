@@ -21,6 +21,7 @@ from fairseq.models import (
 from fairseq.models.roberta.model import RobertaModel, RobertaLMHead, RobertaEncoder
 from fairseq.modules import (
     grad_reverse,
+    #GradientReversal,
     LayerNorm,
     TransformerSentenceEncoder,
 )
@@ -89,15 +90,17 @@ class RobertaMTEncoder(RobertaEncoder):
             activation_fn=args.activation_fn,
             weight=self.sentence_encoder.embed_tokens.weight,
         )
-
+#        if  getattr(args, 'revgrad', False) :
+#            self.revgrad = GradientReversal(self.aux_ratio)
+        self.revgrad=  getattr(args, 'revgrad', False)
         self.aux_lm_head = RobertaLMHead(
             embed_dim=args.encoder_embed_dim,
             output_dim=len(dictionary_aux),
             activation_fn=args.activation_fn,
             weight=None
         )
-        self.revgrad = getattr(args, 'revgrad', False) 
 
+        
 
     def forward(self, src_tokens, features_only=False, return_all_hiddens=False, masked_tokens=None, **unused):
         """
@@ -118,11 +121,12 @@ class RobertaMTEncoder(RobertaEncoder):
         """
         x, extra = self.extract_features(src_tokens, return_all_hiddens=return_all_hiddens)
         if not features_only:
-            primary_x, aux_x = self.output_layer(x, masked_tokens=masked_tokens)
-            if self.revgrad :
-                x = primary_x, grad_reverse(aux_x, self.aux_ratio)
-            else:
-                x = primary_x, aux_x
+            x = self.output_layer(x, masked_tokens=masked_tokens)
+#            primary_x, aux_x = self.output_layer(x, masked_tokens=masked_tokens)
+#            if self.revgrad :
+#                x = primary_x, grad_reverse(aux_x, self.aux_ratio)
+#            else:
+#                x = primary_x, aux_x
         return x, extra
 
     def extract_features(self, src_tokens, return_all_hiddens=False, **unused):
@@ -134,7 +138,10 @@ class RobertaMTEncoder(RobertaEncoder):
         return features, {'inner_states': inner_states if return_all_hiddens else None}
 
     def output_layer(self, features, masked_tokens=None, **unused):
-        return self.lm_head(features, masked_tokens), self.aux_lm_head(features, masked_tokens)
+        if self.revgrad:
+            return self.lm_head(features, masked_tokens), self.aux_lm_head(grad_reverse(features, self.aux_ratio), masked_tokens)
+        else:
+            return self.lm_head(features, masked_tokens), self.aux_lm_head(features, masked_tokens)
 
     def max_positions(self):
         """Maximum output length supported by the encoder."""

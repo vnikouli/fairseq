@@ -236,10 +236,20 @@ class MaskedLMAdvTask(MaskedLMTask):
         if ignore_grad:
             loss = loss[0]*0, loss[1]*0
         
-
+        #import pdb
+        #pdb.set_trace()
+        #loss[1].register_hook(lambda grad: print("LOSS",grad.data)) 
+        #for p in model.decoder.aux_lm_head.parameters():
+        #    p.register_hook(lambda grad: print("alm",grad.data)) 
         optimizer.backward(loss[0], retain_graph=True)
         optimizer.backward(loss[1])
-
+ #       with open("revgrad{}.log".format(model.decoder.aux_ratio), "w") as fd:
+ #           for p in model.decoder.aux_lm_head.named_parameters():
+ #               fd.write(str(p[0])+str(p[1].grad.data)+"\n")
+ #           fd.write("\nencoder\n")
+ #           for p in model.decoder.sentence_encoder.layers[-1].named_parameters():
+ #               fd.write(str(p[0])+str(p[1].grad.data)+"\n")
+ #       print(loss[1].grad)
         return loss, sample_size, logging_output
 
     def valid_step(self, sample, model, criterion):
