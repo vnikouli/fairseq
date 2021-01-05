@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.prune as prune
-from fairseq import utils
+from fairseq import utils, lth_utils
 from fairseq.checkpoint_utils import prune_state_dict
 from fairseq.data import Dictionary
 from fairseq.models import FairseqDecoder, FairseqEncoder
@@ -107,6 +107,7 @@ class BaseFairseqModel(nn.Module):
         get_sparsity(self, "")
 
     def finalize_prune(self):
+
         # make pruning final
         def finalize_prune(m, prefix):
             if not prefix =="":
@@ -115,10 +116,12 @@ class BaseFairseqModel(nn.Module):
                 #print(prefix, n)
                 finalize_prune(c, prefix+n)
 
-            if hasattr(m, "weight"):
-                #        print(prefix)
+            if hasattr(m, "weight_orig"):
+                #print("FINALIZE", prefix)
                 prune.remove(m, "weight")
         finalize_prune(self, "")
+    def do_prune(self, pruning):
+        return lth_utils.do_prune(self, " ", pruning)
 
     def upgrade_state_dict(self, state_dict):
         """Upgrade old state dicts to work with newer code."""

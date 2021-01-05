@@ -72,22 +72,29 @@ def iterative_pruning(args, task, init_distributed):
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     from fairseq import lth_utils
     iterations=args.pruning_iterations
-    step=args.pruning_step
     savedir=args.save_dir
     tbdir = args.tensorboard_logdir
-    #args.tensorboard_logdir
     it=0
     sparsity= 0
     for it in range(iterations):
         # empty tb writers for new iteration
         progress_bar._tensorboard_writers={}
-        if it==0:
-            pr = args.pruning_start
+        if getattr(args, "pruning_step") and getattr(args, "pruning_start"):
+            if it==0:
+                pr = args.pruning_start
+            else:            
+                pr += args.pruning_step               
+                model.finalize_prune()
             sparsity = 1 - pr
-        else:            
-            pr += args.pruning_step
+        else:
+            if it==0:
+                pr = args.pruning_start
+            else:
+                pr += sparsity/(iterations-it)
+
+            if it > 0:
+                model.finalize_prune()
             sparsity = 1 - pr
-            model.finalize_prune()
         args.save_dir='{}/pruning-pr{}-it{}'.format(savedir, pr, it)
         args.tensorboard_logdir='{}/pruning-pr{}-it{}'.format(tbdir, pr, it)
         logger.info('tensorboard {}'.format(args.tensorboard_logdir))
@@ -96,13 +103,15 @@ def iterative_pruning(args, task, init_distributed):
         model = lth_utils.get_lottery_ticket(model, args.init_checkpoint, args.final_checkpoint, pr, it)
         it+=1
 
-        logger.info('num. model params: {} (num. trained: {}), {} zeroz'.format(
+        logger.info('num. model params: {} (num. trained: {}), {} non-zeros'.format(
             sum(p.numel() for p in model.parameters()),
             sum(p.numel() for p in model.parameters() if p.requires_grad),
 
             sum(torch.nonzero(p.data).size(0) for p in model.parameters()),
         ))
 
+        lth_utils.get_pruning_per_weight(model, "")
+            
         # Build trainer
         if args.model_parallel_size == 1:
             #trainer = Trainer(args, task, model, criterion,_ite,mask)
@@ -439,61 +448,6 @@ def cli_main(modify_parser=None):
         main(args)
 
 
-def original_initialization(model,mask_temp, initial_state_dict):
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name): 
-            param.data = mask_temp[step].cuda() * initial_state_dict[name].cuda()
-            step = step + 1
-        else:
-            param.data = initial_state_dict[name].cuda()
-
-
-def new_prune_by_percentile(model,mask,_ite,percents):
-        # Calculate percentile value
-        step = 0
-        for name, param in model.named_parameters():
-            # We do not prune bias term
-            if ('weight' in name):
-                q = percents[_ite]
-                k = 1 + round(.01 * float(q) * (param.data.numel() - 1))
-                percentile_value = torch.abs(param.data).view(-1).kthvalue(k).values.item()
-                new_mask = torch.where(torch.abs(param.data) < percentile_value, torch.tensor([0]).cuda(), torch.tensor([1]).cuda())
-      
-                param.data *= new_mask
-                mask[step] = new_mask
-                step += 1
-
-
-def new_prune_by_percentile(model, mask, q):
-    # Calculate percentile value
-    step = 0
-    for name, param in model.named_parameters():
-        # We do not prune bias term
-        if ('weight' in name):
-            k = 1 + round(.01 * float(q) * (param.data.numel() - 1))
-            percentile_value = torch.abs(param.data).view(-1).kthvalue(k).values.item()
-            new_mask = torch.where(torch.abs(param.data) < percentile_value, torch.tensor([0]).cuda(),
-                                   torch.tensor([1]).cuda())
-
-            param.data *= new_mask
-            mask[step] = new_mask
-            step += 1
-
-
-# Function to make an empty mask of the same size as the model
-def make_mask(model):
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            step = step + 1
-    mask = [None]* step 
-    step = 0
-    for name, param in model.named_parameters(): 
-        if ('weight' in name):
-            mask[step] = torch.ones_like(param.data).cuda()
-            step = step + 1
-    return mask
 
 def print_nonzeros(model,mask,_ite):
     print_nonzeros(model, mask, _ite)

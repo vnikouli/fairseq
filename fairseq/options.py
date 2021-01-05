@@ -244,7 +244,7 @@ def get_parser(desc, default_task="translation"):
     parser.add_argument( "--final-checkpoint", type=str,  metavar="STR",
                          help="final checkpoint used to obtain mask for pruning",)
     parser.add_argument( "--pruning-iterations", type=int, default="10", help="init")
-    parser.add_argument( "--pruning-step", type=float, default="0.2", help="init")
+    parser.add_argument( "--pruning-step", type=float, default=None, help="init")
     parser.add_argument( "--pruning-start", type=float, default="0.2", help="init")
 
 
