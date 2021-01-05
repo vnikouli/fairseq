@@ -46,6 +46,16 @@ class TransformerEncoderLayer(nn.Module):
         self.fc2 = self.build_fc2(args.encoder_ffn_embed_dim, self.embed_dim)
         self.final_layer_norm = LayerNorm(self.embed_dim)
 
+    def get_global_weights_to_prune(self):
+        weights = []
+        weights.append((self.self_attn.k_proj, "weight"))
+        weights.append((self.self_attn.q_proj, "weight"))
+        weights.append((self.self_attn.v_proj, "weight"))
+        weights.append((self.self_attn.out_proj, "weight"))
+        weights.append((self.fc1, "weight"))
+        weights.append((self.fc2, "weight"))
+        return weights
+        
     def build_fc1(self, input_dim, output_dim):
         return nn.Linear(input_dim, output_dim)
 
@@ -187,6 +197,20 @@ class TransformerDecoderLayer(nn.Module):
         self.need_attn = True
 
         self.onnx_trace = False
+
+    def get_global_weights_to_prune(self):
+        weights = []
+        weights.append((self.self_attn.k_proj, "weight"))
+        weights.append((self.self_attn.q_proj, "weight"))
+        weights.append((self.self_attn.v_proj, "weight"))
+        weights.append((self.self_attn.out_proj, "weight"))
+        weights.append((self.encoder_attn.k_proj, "weight"))
+        weights.append((self.encoder_attn.q_proj, "weight"))
+        weights.append((self.encoder_attn.v_proj, "weight"))
+        weights.append((self.encoder_attn.out_proj, "weight"))
+        weights.append((self.fc1, "weight"))
+        weights.append((self.fc2, "weight"))
+        return weights
 
     def build_fc1(self, input_dim, output_dim):
         return nn.Linear(input_dim, output_dim)
