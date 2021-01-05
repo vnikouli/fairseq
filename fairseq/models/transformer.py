@@ -287,7 +287,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
         """Get normalized probabilities (or log probs) from a net's output."""
         return self.get_normalized_probs_scriptable(net_output, log_probs, sample)
 
-
+    def get_global_weights_to_prune(self):
+        return self.encoder.get_global_weights_to_prune()+self.decoder.get_global_weights_to_prune()
 
 
 @register_model("transformer_align")
@@ -357,6 +358,7 @@ class TransformerAlignModel(TransformerModel):
         return decoder_out
 
 
+
 class TransformerEncoder(FairseqEncoder):
     """
     Transformer encoder consisting of *args.encoder_layers* layers. Each layer
@@ -410,6 +412,12 @@ class TransformerEncoder(FairseqEncoder):
             self.layernorm_embedding = LayerNorm(embed_dim)
         else:
             self.layernorm_embedding = None
+
+    def get_global_weights_to_prune(self):
+        weights = []
+        for layer in self.layers:
+            weights += layer.get_global_weights_to_prune()
+        return weights
 
     def build_encoder_layer(self, args):
         return TransformerEncoderLayer(args)
@@ -685,6 +693,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self.layernorm_embedding = LayerNorm(embed_dim)
         else:
             self.layernorm_embedding = None
+
+    def get_global_weights_to_prune(self):
+        weights = []
+        for layer in self.layers:
+            weights += layer.get_global_weights_to_prune()
+        return weights
 
     def build_decoder_layer(self, args, no_encoder_attn=False):
         return TransformerDecoderLayer(args, no_encoder_attn)
